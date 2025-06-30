@@ -1,4 +1,8 @@
 from pathlib import Path
+import base64
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2
 
 import depthai as dai
 from depthai_nodes.node import (
@@ -13,6 +17,19 @@ from utils.annotation_node import AnnotationNode
 from frontend_server import FrontendServer
 
 _, args = initialize_argparser()
+
+
+def base64_to_cv2_image(base64_data_uri: str):
+    if "," in base64_data_uri:
+        header, base64_data = base64_data_uri.split(",", 1)
+    else:
+        base64_data = base64_data_uri  # In case frontend strips header
+
+    binary_data = base64.b64decode(base64_data)
+    np_arr = np.frombuffer(binary_data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    return img
+
 
 FRONTEND_DIRECTORY = Path(__file__).parent / "frontend" / "dist"
 IP = args.ip or "localhost"
@@ -131,10 +148,16 @@ with dai.Pipeline(device) as pipeline:
         nn_with_parser.getParser(0).setConfidenceThreshold(CONFIDENCE_THRESHOLD)
         print(f"Confidence threshold set to: {CONFIDENCE_THRESHOLD}:")
 
+    def image_upload_service(image_data):
+        image = base64_to_cv2_image(image_data["data"])
+        plt.imshow(image)
+        plt.show()
+
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService(
         "Threshold Update Service", conf_threshold_update_service
     )
+    visualizer.registerService("Image Upload Service", image_upload_service)
 
     print("Pipeline created.")
 
