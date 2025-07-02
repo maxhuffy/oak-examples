@@ -28,5 +28,18 @@ build_steps = [
     "bash -c 'cp /app/depthai-core/build/examples/cpp/UVC/uvc-gadget/lib/libuvcgadget.so /usr/lib'",
     "bash -c 'cp /app/depthai-core/build/examples/cpp/UVC/uvc-gadget/lib/libuvcgadget.so.0.4.0 /usr/lib'",
     "bash -c 'chmod +x /app/uvc-start.sh'",
-    "bash -c '/app/uvc-start.sh start'",
+]
+
+allowed_devices = [{ allow = true, access = "rwm" }]
+
+additional_mounts = [
+    { source = "/dev", target = "/dev", type = "devtmpfs", options = [
+        "mode=777",
+    ] },
+    { source = "/sys/kernel/config", target = "/sys/kernel/config", type = "configfs", options = [                
+                "nosuid",      
+                "noexec",          
+                "nodev",       
+                "rw"           
+    ] },
 ]
