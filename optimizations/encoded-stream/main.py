@@ -93,7 +93,7 @@ class GoogleDownloader:
 
 file_path = "encoded_stream.pkl"
 if not os.path.exists(file_path):
-    print("File not found, downloading...")
+    print("Prerecorded stream not found, downloading...")
     GoogleDownloader.download(
         "https://drive.google.com/file/d/1vuYwyJazQmhvkMMyrdmVuoXFU-gKQbRg/view?usp=drive_link",
         file_path
