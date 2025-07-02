@@ -1,6 +1,6 @@
 # Application metadata
-identifier = "com.example.uvc_app"
-app_version = "0.1.0"
+identifier = "com.example.streaming.uvc"
+app_version = "1.0.0"
 
 # Command to run when the container starts
 entrypoint = ["bash", "-c", "/app/uvc-start.sh start"]
