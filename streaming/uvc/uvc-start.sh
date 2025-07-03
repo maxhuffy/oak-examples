@@ -203,7 +203,7 @@ case "$1" in
 	echo "    ==== Configuration done ===="
 	
 	echo "    ==== Starting UVC APP ===="
-	./uvc_example
+	/app/uvc_example
 
 	;;
 
