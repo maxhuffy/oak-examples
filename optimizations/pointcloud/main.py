@@ -151,6 +151,34 @@ ensure_downloaded(
 visualizer = dai.RemoteConnection()
 encoded_stream_queue = visualizer.addTopic("_Point Cloud Color")
 depth_queue = visualizer.addTopic("Point Cloud")
+INTRINSICS = {
+  "data": {
+    "left": {
+      "focalLenght": {
+        "x": 797.4816241796688,
+        "y": 797.5769653320312
+      },
+      "principalPoint": {
+        "x": 626.9266967773438,
+        "y": 442.66073608398844
+      }
+    },
+    "right": {
+      "focalLenght": {
+        "x": 796.9463500976562,
+        "y": 796.8508300781125
+      },
+      "principalPoint": {
+        "x": 641.7362670898438,
+        "y": 421.83090209960944
+      }
+    }
+  },
+  "error": None,
+  "message": None,
+  "status": 200
+}
+visualizer.registerService("getCameraIntrinsics", lambda x: INTRINSICS)
 
 encoded_stream_thread = threading.Thread(
     target=lambda: send_frames(
