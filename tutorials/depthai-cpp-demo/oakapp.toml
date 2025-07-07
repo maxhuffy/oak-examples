@@ -1,0 +1,42 @@
+# Application metadata
+identifier = "com.example.streaming.uvc"
+app_version = "1.0.0"
+
+# Command to run when the container starts
+entrypoint = ["bash", "-c", "/app/uvc-start.sh start"]
+
+# Here is the place where you can install all the dependencies that are needed at run-time
+prepare_container = [
+    { type = "COPY", source = "uvc-start.sh", target = "/app/uvc-start.sh" },
+    { type = "RUN", command = "chmod +x /app/uvc-start.sh" },
+    { type = "RUN", command = "apt-get update" },
+    { type = "RUN", command = "apt-get install -y libusb-1.0-0" },
+]
+
+# Here is the place where you can install all the dependencies that are needed at build-time
+prepare_build_container = [
+    { type = "RUN", command = "apt-get update" },
+    { type = "RUN", command = "apt-get install -y git build-essential cmake pkg-config libusb-1.0-0-dev libudev-dev curl tar unzip libssl-dev ninja-build" },
+]
+
+# Commands to execute after all files (including this TOML) are in /app
+build_steps = [
+    "bash -c 'git clone https://github.com/luxonis/depthai-core.git /app/depthai-core'",
+    "bash -c 'pushd /app/depthai-core && git checkout feature/rvc4_uvc && git submodule update --init --recursive && popd'",
+    "bash -c 'pushd /app/depthai-core && cmake -S . -B build -DDEPTHAI_ENABLE_CURL=OFF -DDEPTHAI_ENABLE_REMOTE_CONNECTION=OFF -DDEPTHAI_ENABLE_EVENTS_MANAGER=OFF -DDEPTHAI_ENABLE_PROTOBUF=OFF -DDEPTHAI_OPENCV_SUPPORT=OFF -DDEPTHAI_BUILD_EXAMPLES=ON && cmake --build build --target uvc_example --parallel 4 && popd'",
+    "bash -c 'cp /app/depthai-core/build/examples/cpp/UVC/uvc_example /app'",
+]
+
+# allowed_devices = [{ allow = true, access = "rwm" }]
+# 
+# additional_mounts = [
+#     { source = "/dev", target = "/dev", type = "devtmpfs", options = [
+#         "mode=777",
+#     ] },
+#     { source = "/sys/kernel/config", target = "/sys/kernel/config", type = "configfs", options = [                
+#                 "nosuid",      
+#                 "noexec",          
+#                 "nodev",       
+#                 "rw"           
+#     ] },
+# ]
