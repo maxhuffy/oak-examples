@@ -102,7 +102,7 @@ visualizer = dai.RemoteConnection()
 stream_queue = visualizer.addTopic("H.264 Stream")
 reader = PickleReader(file_path)
 frame_sender = FrameSender(
-    fps=30, 
+    fps=10, # TODO: This is where we want to have stable 30 FPS
     queue=stream_queue
 )
 try:
