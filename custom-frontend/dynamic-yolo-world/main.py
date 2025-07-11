@@ -10,7 +10,7 @@ from depthai_nodes.node import (
     ImgDetectionsFilter,
 )
 
-from utils.helper_functions import extract_text_embeddings
+from utils.helper_functions import extract_text_embeddings, extract_image_prompt_embeddings
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
 
@@ -149,9 +149,24 @@ with dai.Pipeline(device) as pipeline:
         print(f"Confidence threshold set to: {CONFIDENCE_THRESHOLD}:")
 
     def image_upload_service(image_data):
+        print("Image upload service called")
         image = base64_to_cv2_image(image_data["data"])
-        plt.imshow(image)
-        plt.show()
+        image_features = extract_image_prompt_embeddings(image)
+        print("Image features extracted, sending to model...")
+        inputNNData = dai.NNData()
+        inputNNData.addTensor(
+            "texts", image_features, dataType=dai.TensorInfo.DataType.U8F
+        )
+        textInputQueue.send(inputNNData)
+
+        filename = image_data["filename"]
+        CLASS_NAMES = [filename.split(".")[0]]
+
+        det_process_filter.setLabels(
+            labels=[i for i in range(len(CLASS_NAMES))], keep=True
+        )
+        annotation_node.setLabelEncoding({k: v for k, v in enumerate(CLASS_NAMES)})
+        print(f"Classes set to: {CLASS_NAMES}")
 
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService(
