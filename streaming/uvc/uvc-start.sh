@@ -198,6 +198,9 @@ case "$1" in
     echo "$PRODUCT" > strings/0x409/product
     echo "OK"
 
+    echo "Setting max speed to super-speed (5 Gbps)"
+    echo "super-speed" > max_speed
+
     echo "Creating Config"
     mkdir configs/c.1
     mkdir configs/c.1/strings/0x409
