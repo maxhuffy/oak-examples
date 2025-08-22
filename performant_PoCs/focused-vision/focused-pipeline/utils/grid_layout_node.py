@@ -1,19 +1,17 @@
 import math
-from typing import Dict, List, Tuple, Optional
+from typing import List, Tuple
 import numpy as np
 import cv2
 import depthai as dai
 
-GROUP_STRIDE = 1000
-
 def _layout_rects(n: int) -> List[Tuple[float, float, float, float]]:
     R: List[Tuple[float, float, float, float]] = []
-    def row(cols: int, y0: float, h: float, count: Optional[int] = None):
-        if count is None: count = cols
+    def row(cols: int, y0: float, h: float, count: int | None = None):
+        if count is None:
+            count = cols
         w = 1.0 / cols
         for i in range(count):
             R.append((i * w, y0, w, h))
-
     if n <= 1:
         return [(0, 0, 1, 1)]
     if n == 2:
@@ -47,98 +45,107 @@ def _fit_letterbox(img: np.ndarray, W: int, H: int) -> np.ndarray:
     return canvas
 
 class GridLayoutNode(dai.node.HostNode):
+    """
+    Consumes GatherData.out (detections as reference):
+      - msg.reference_data: ImgDetectionsExtended (has .detections, .getSequenceNum(), .getTimestamp())
+      - msg.gathered: list[dai.ImgFrame] (crops for the same timestamp)
+
+    Emits one mosaic per detector frame. No count buffer needed.
+    """
     def __init__(self):
         super().__init__()
-        self.crops_input = self.createInput()
-        self.num_configs_input = self.createInput()
+        self.gather_crops = self.createInput()
         self.output = self.createOutput()
 
         self._target_w = 1920
         self._target_h = 1080
         self.frame_type = dai.ImgFrame.Type.BGR888p
 
-        self._expected: Dict[int, int] = {}
-        self._frames: Dict[int, List[dai.ImgFrame]] = {}
-
-    def build(self, crops_input: dai.Node.Output, num_configs_input: dai.Node.Output, target_size: Tuple[int, int]) -> "GridLayoutNode":
+    def build(self, gather_crops: dai.Node.Output, target_size: Tuple[int, int]) -> "GridLayoutNode":
         self._target_w, self._target_h = map(int, target_size)
-        print(f"[GridLayoutNode] target={self._target_w}x{self._target_h}, GROUP_STRIDE={GROUP_STRIDE}")
-        self.link_args(crops_input, num_configs_input)
+        print(f"[GridLayoutNode] target={self._target_w}x{self._target_h}, input=GatherData.out (detections as reference)")
+        self.link_args(gather_crops)
         return self
 
-    def process(self, crops_msg, count_msg):
+    def _to_bgr(self, img: np.ndarray) -> np.ndarray:
+        if img.ndim == 2:
+            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        if img.ndim == 3 and img.shape[2] == 4:
+            return cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+        return img
 
-        if isinstance(count_msg, dai.Buffer):
-            gid = int(count_msg.getSequenceNum())
-            N = len(bytearray(count_msg.getData()))
-            self._expected[gid] = N
-            self._frames.setdefault(gid, [])
-            print(f"[GridLayoutNode] gid={gid} COUNT={N}")
-            self._try_emit(gid)
-
-        if isinstance(crops_msg, dai.ImgFrame):
-            seq = int(crops_msg.getSequenceNum())
-            gid = (seq // GROUP_STRIDE) * GROUP_STRIDE
-            self._frames.setdefault(gid, []).append(crops_msg)
-            got = len(self._frames[gid])
-            exp = self._expected.get(gid, -1)
-            print(f"[GridLayoutNode] gid={gid} CROP {got}/{exp if exp>=0 else '?'} (seq={seq})")
-            self._try_emit(gid)
-
-    def _try_emit(self, gid: int):
-        exp = self._expected.get(gid)
-        frs = self._frames.get(gid)
-        if exp is None:
+    def process(self, msg) -> None:
+        # Expect a GatherData bundle: has 'reference_data' and 'gathered'
+        if not hasattr(msg, "reference_data") or not hasattr(msg, "gathered"):
             return
 
-        if exp == 0:
+        ref = msg.reference_data
+        crops = msg.gathered or []
+
+        # expected = number of detections (preferred)
+        try:
+            expected = len(ref.detections)
+        except Exception:
+            expected = len(crops)
+
+        n = len(crops)
+        use = min(expected, n)
+
+        # metadata for output
+        ts = None
+        seq = None
+        try:
+            ts = ref.getTimestamp()
+        except Exception:
+            pass
+        try:
+            seq = int(ref.getSequenceNum())
+        except Exception:
+            pass
+
+        if use == 0:
+            # emit a blank to keep cadence
             out_img = np.zeros((self._target_h, self._target_w, 3), dtype=np.uint8)
             out = dai.ImgFrame()
             out.setType(self.frame_type)
             out.setWidth(self._target_w)
             out.setHeight(self._target_h)
             out.setData(out_img.tobytes())
-            out.setSequenceNum(gid)
+            if ts is not None: out.setTimestamp(ts)
+            if seq is not None: out.setSequenceNum(seq)
             self.output.send(out)
-            del self._expected[gid]
-            self._frames.pop(gid, None)
-            print(f"[GridLayoutNode] gid={gid} EMIT blank (0 tiles)")
+            print(f"[GridLayoutNode] seq={seq} EMIT blank (0 tiles)")
             return
 
-        if frs is None or len(frs) < exp:
+        cv_frames: List[np.ndarray] = []
+        for fr in crops[:use]:
+            try:
+                cv_frames.append(self._to_bgr(fr.getCvFrame()))
+            except Exception:
+                pass
+        if not cv_frames:
             return
-
-        cv_frames = [fr.getCvFrame() for fr in frs[:exp]]
-        for i, fr_img in enumerate(cv_frames):
-            if fr_img.ndim == 2:
-                cv_frames[i] = cv2.cvtColor(fr_img, cv2.COLOR_GRAY2BGR)
-            elif fr_img.ndim == 3 and fr_img.shape[2] == 4:
-                cv_frames[i] = cv2.cvtColor(fr_img, cv2.COLOR_RGBA2BGR)
 
         layout = _layout_rects(len(cv_frames))
         out_img = np.zeros((self._target_h, self._target_w, 3), dtype=np.uint8)
-
         for (x, y, w, h), img in zip(layout, cv_frames):
             W = max(1, int(w * self._target_w))
             H = max(1, int(h * self._target_h))
             X = int(x * self._target_w)
             Y = int(y * self._target_h)
-            tile = _fit_letterbox(img, W, H)
-            out_img[Y:Y+H, X:X+W] = tile
+            out_img[Y:Y+H, X:X+W] = _fit_letterbox(img, W, H)
 
         out = dai.ImgFrame()
         out.setType(self.frame_type)
         out.setWidth(self._target_w)
         out.setHeight(self._target_h)
         out.setData(out_img.tobytes())
-        try:
-            out.setTimestamp(frs[-1].getTimestamp())
-        except Exception:
-            pass
-        out.setSequenceNum(gid)
+        if ts is not None:
+            try: out.setTimestamp(ts)
+            except Exception: pass
+        if seq is not None:
+            try: out.setSequenceNum(seq)
+            except Exception: pass
 
         self.output.send(out)
-        print(f"[GridLayoutNode] gid={gid} EMIT mosaic with {len(cv_frames)} tiles")
-
-        del self._expected[gid]
-        del self._frames[gid]
+        print(f"[GridLayoutNode] seq={seq} EMIT mosaic with {len(cv_frames)} tiles")

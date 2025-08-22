@@ -2,14 +2,14 @@ import depthai as dai
 from depthai_nodes import ImgDetectionsExtended
 from typing import Tuple
 
-GROUP_STRIDE = 1000
+GROUP_STRIDE = 1000  # must match script.py and grid_layout_node.py
 
 class ProcessDetections(dai.node.HostNode):
     """
     For each detector frame:
       - emits a COUNT Buffer with seq = gid (= base_seq * GROUP_STRIDE)
       - emits N crop configs, each with seq = gid + i (i=0..N-1)
-      - sets reusePreviousImage=True so ImageManip can reuse the last image
+      - reusePreviousImage = False (Script sends a matching frame for each config)
     """
     def __init__(self):
         super().__init__()
@@ -37,14 +37,14 @@ class ProcessDetections(dai.node.HostNode):
 
         print(f"[ProcessDetections] base_seq={base_seq} gid={gid} det_count={num_cfgs}")
 
-        # Count message: seq = gid, data length == number of crops
+        # COUNT Buffer: seq = gid; data length == number of crops
         count_msg = dai.Buffer()
         count_msg.setData(b"\x00" * num_cfgs)
         count_msg.setTimestamp(ts)
         count_msg.setSequenceNum(gid)
         self.num_configs_output.send(count_msg)
 
-        # Emit crop configs with seq = gid + i; reuse last image
+        # One config per detection, unique seq per crop (gid + i)
         for i, det in enumerate(dets):
             rect = det.rotated_rect
 
@@ -58,7 +58,7 @@ class ProcessDetections(dai.node.HostNode):
             cfg = dai.ImageManipConfig()
             cfg.addCropRotatedRect(new_rect, normalizedCoords=True)
             cfg.setOutputSize(self._target_w, self._target_h, dai.ImageManipConfig.ResizeMode.STRETCH)
-            cfg.setReusePreviousImage(True)
+
             cfg.setTimestamp(ts)
-            cfg.setSequenceNum(gid)
+            cfg.setSequenceNum(gid + i)
             self.config_output.send(cfg)

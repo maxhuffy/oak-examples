@@ -74,11 +74,11 @@ with dai.Pipeline(device) as pipeline:
         target_size=(CROP_OUT_W, CROP_OUT_H),
     )
 
+
     script = pipeline.create(dai.node.Script)
     script.setScriptPath(str(Path(__file__).parent / "utils/script.py"))
     input_node.link(script.inputs["frame_input"])
     proc.config_output.link(script.inputs["config_input"])
-    proc.num_configs_output.link(script.inputs["num_configs_input"])
 
     # ImageManip crops (N outputs per frame)
     face_crop_disp = pipeline.create(dai.node.ImageManip)
@@ -89,6 +89,10 @@ with dai.Pipeline(device) as pipeline:
     face_crop_disp.inputImage.setMaxSize(300)
     face_crop_disp.setNumFramesPool(300)
     face_crop_disp.inputConfig.setWaitForMessage(True)
+
+    gather_crops = pipeline.create(GatherData).build(args.fps_limit)
+    face_crop_disp.out.link(gather_crops.input_data)
+    stage1_nn.out.link(gather_crops.input_reference)
 
     script.outputs["output_config"].link(face_crop_disp.inputConfig)
     script.outputs["output_frame"].link(face_crop_disp.inputImage)
@@ -108,8 +112,7 @@ with dai.Pipeline(device) as pipeline:
 
     # grid from crop stream
     grid_layout = pipeline.create(GridLayoutNode).build(
-        crops_input=face_crop_disp.out,
-        num_configs_input=proc.num_configs_output,   # count seq = gid
+        gather_crops=gather_crops.out,
         target_size=(CROP_OUT_W, CROP_OUT_H),
     )
     grid_layout.frame_type = frame_type
