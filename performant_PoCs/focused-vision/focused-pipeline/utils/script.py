@@ -16,17 +16,17 @@ try:
 
         gid = int(num_msg.getSequenceNum())  # group id for this detector frame
         num_configs = len(bytearray(num_msg.getData()))
-        node.warn(f"[Script] gid={gid} num_configs={num_configs}")
+        # node.warn(f"[Script] gid={gid} num_configs={num_configs}")
 
         for i in range(max(0, num_configs)):
             cfg = node.inputs["config_input"].get()
-            seq_for_this_pair = gid + i
-            frame.setSequenceNum(seq_for_this_pair)
+            # seq_for_this_pair = gid + i
+            # frame.setSequenceNum(seq_for_this_pair)
 
             node.outputs["output_frame"].send(frame)
             node.outputs["output_config"].send(cfg)
 
-            node.warn(f"[Script] sent pair i={i} seq={seq_for_this_pair}")
+            # node.warn(f"[Script] sent pair i={i} seq={seq_for_this_pair}")
 
 except Exception as e:
     node.warn(f"[Script] Exception: {str(e)}")

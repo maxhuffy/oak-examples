@@ -1,8 +1,9 @@
 import math
-from typing import Dict, List, Tuple, Optional
-import numpy as np
+from typing import Dict, List, Optional, Tuple
+
 import cv2
 import depthai as dai
+import numpy as np
 
 GROUP_STRIDE = 1000
 
@@ -67,7 +68,8 @@ class GridLayoutNode(dai.node.HostNode):
         return self
 
     def process(self, crops_msg, count_msg):
-
+        # This is how you access the gathered data
+        print(crops_msg.gathered)
         if isinstance(count_msg, dai.Buffer):
             gid = int(count_msg.getSequenceNum())
             N = len(bytearray(count_msg.getData()))
