@@ -4,33 +4,17 @@ from depthai_nodes.utils import AnnotationHelper
 
 
 class AnnotationNode(dai.node.HostNode):
-    """
-    Two modes:
-    - build_focused(gathered_pair_out, padding): remap Stage-2 crop eye keypoints -> full-frame and draw.
-    - build_crop(stage2_dets_out): draw eye squares directly on the crop frames.
-    """
     def __init__(self) -> None:
         super().__init__()
         self._mode = "full"
         self._padding = 0.1
         self.EYE_SCALE = 0.25
 
-    def build_focused(self, gathered_pair_out: dai.Node.Output, padding: float) -> "AnnotationNode":
+    def build(self, gathered_pair_out: dai.Node.Output, padding: float) -> "AnnotationNode":
         self._mode = "full"
         self._padding = padding
         self.link_args(gathered_pair_out)
         return self
-
-    def build_crop(self, stage2_dets_out: dai.Node.Output) -> "AnnotationNode":
-        self._mode = "crop"
-        self.link_args(stage2_dets_out)
-        return self
-
-    def process(self, msg) -> None:
-        if self._mode == "full":
-            self._process_full(msg)
-        else:
-            self._process_crop(msg)
 
     def _draw_eye_squares(self, detections, src_w, src_h, annotation_helper):
         """Common method to draw eye squares"""
@@ -50,8 +34,7 @@ class AnnotationNode(dai.node.HostNode):
                     [kp.x + half_w_n, kp.y + half_h_n]
                 )
 
-    def _process_full(self, gather_msg) -> None:
-        """Overlay on FULL 1080p frame"""
+    def process(self, gather_msg) -> None:
         dets_msg: ImgDetectionsExtended = gather_msg.reference_data
         assert isinstance(dets_msg, ImgDetectionsExtended)
         src_w, src_h = dets_msg.transformation.getSize()
@@ -80,7 +63,7 @@ class AnnotationNode(dai.node.HostNode):
             transformed_detections = []
             
             for kp in crop_det.keypoints[:2]:
-                # Transform from crop space (0-1) to full frame space
+                # Transform from crop space to full frame space
                 # Use original face dimensions, not padded dimensions
                 fx = left + kp.x * new_w
                 fy = top + kp.y * new_h
@@ -96,17 +79,6 @@ class AnnotationNode(dai.node.HostNode):
             })()
 
             self._draw_eye_squares([temp_det], src_w, src_h, ann)
-
-        out = ann.build(timestamp=dets_msg.getTimestamp(), sequence_num=dets_msg.getSequenceNum())
-        self.out.send(out)
-
-    def _process_crop(self, dets_msg) -> None:
-        """Overlay on CROP 320x240 frame"""
-        assert isinstance(dets_msg, ImgDetectionsExtended)
-        crop_w, crop_h = dets_msg.transformation.getSize()
-        ann = AnnotationHelper()
-
-        self._draw_eye_squares(dets_msg.detections, crop_w, crop_h, ann)
 
         out = ann.build(timestamp=dets_msg.getTimestamp(), sequence_num=dets_msg.getSequenceNum())
         self.out.send(out)
