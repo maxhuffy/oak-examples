@@ -1,5 +1,4 @@
 try:
-
     while True:
         # Pull one source frame (full-resolution) and its crop count
         frame = node.inputs["frame_input"].get()
@@ -12,7 +11,6 @@ try:
 
             node.outputs["output_frame"].send(frame)
             node.outputs["output_config"].send(cfg)
-
 
 except Exception as e:
     node.warn(f"[Script] Exception: {str(e)}")

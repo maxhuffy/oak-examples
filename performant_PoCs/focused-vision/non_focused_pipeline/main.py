@@ -6,13 +6,7 @@ from depthai_nodes.node import ParsingNeuralNetwork, GatherData
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
 
-DET_MODEL = "luxonis/yunet:320x240"
-
-
-REQ_WIDTH, REQ_HEIGHT = (
-    320,
-    240,
-)
+DET_MODEL = "luxonis-ml-team/eye-detection:eye-detection-512x512"
 
 _, args = initialize_argparser()
 
@@ -20,10 +14,6 @@ visualizer = dai.RemoteConnection(httpPort=8082)
 device = dai.Device(dai.DeviceInfo(args.device)) if args.device else dai.Device()
 platform = device.getPlatform().name
 print(f"Platform: {platform}")
-
-if platform == "RVC4":
-    #DET_MODEL = "luxonis/scrfd-face-detection:10g-640x640"
-    REQ_WIDTH, REQ_HEIGHT = (768, 768)
 
 frame_type = (
     dai.ImgFrame.Type.BGR888i if platform == "RVC4" else dai.ImgFrame.Type.BGR888p
@@ -41,7 +31,10 @@ with dai.Pipeline(device) as pipeline:
     # face detection model
     det_model_description = dai.NNModelDescription(DET_MODEL)
     det_model_description.platform = platform
-    det_model_nn_archive = dai.NNArchive(dai.getModelFromZoo(det_model_description))
+    det_model_nn_archive = dai.NNArchive(dai.getModelFromZoo(det_model_description, apiKey=args.api_key))
+    
+    det_w = det_model_nn_archive.getInputWidth()
+    det_h = det_model_nn_archive.getInputHeight()
 
     # media/camera input
     if args.media_path:
@@ -51,21 +44,21 @@ with dai.Pipeline(device) as pipeline:
         replay.setLoop(True)
         if args.fps_limit:
             replay.setFps(args.fps_limit)
-        replay.setSize(REQ_WIDTH, REQ_HEIGHT)
+        replay.setSize(det_w, det_h)
     else:
         cam = pipeline.create(dai.node.Camera).build()
         cam_out = cam.requestOutput(
-            size=(REQ_WIDTH, REQ_HEIGHT), type=frame_type, fps=args.fps_limit
+            size=(det_w, det_h), type=frame_type, fps=args.fps_limit
         )
     input_node_out = replay.out if args.media_path else cam_out
 
     # resize to det model input size
     resize_node = pipeline.create(dai.node.ImageManip)
     resize_node.initialConfig.setOutputSize(
-        det_model_nn_archive.getInputWidth(), det_model_nn_archive.getInputHeight()
+        det_w, det_h
     )
     resize_node.setMaxOutputFrameSize(
-        det_model_nn_archive.getInputWidth() * det_model_nn_archive.getInputHeight() * 3
+        det_w * det_h * 3
     )
     resize_node.initialConfig.setReusePreviousImage(False)
     resize_node.inputImage.setBlocking(True)

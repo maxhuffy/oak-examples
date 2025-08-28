@@ -20,7 +20,6 @@ class AnnotationNode(dai.node.HostNode):
             self.out.send(out)
             return
 
-
         for detection in dets_msg.detections:
             face_bbox = detection.rotated_rect.getPoints()
 

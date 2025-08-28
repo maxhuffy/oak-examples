@@ -2,6 +2,7 @@ from pathlib import Path
 
 import depthai as dai
 from depthai_nodes.node import GatherData, ParsingNeuralNetwork
+
 from utils.annotation_node import AnnotationNode
 from utils.grid_eyes_annotation_node import GridEyesAnnotationNode
 from utils.arguments import initialize_argparser
@@ -11,9 +12,8 @@ from utils.process import ProcessDetections
 _, args = initialize_argparser()
 
 INPUT_WIDTH, INPUT_HEIGHT = 3840, 2160
-CROP_OUT_W, CROP_OUT_H = 320, 240
 DET_MODEL = "luxonis/yunet:320x240"
-PADDING = 0.0
+EYE_MODEL = "luxonis-ml-team/eye-detection:eye-detection-512x512"
 
 visualizer = dai.RemoteConnection(httpPort=8082)
 device = dai.Device(dai.DeviceInfo(args.device)) if args.device else dai.Device()
@@ -28,6 +28,17 @@ with dai.Pipeline(device) as pipeline:
     det_desc = dai.NNModelDescription(DET_MODEL)
     det_desc.platform = platform
     det_archive = dai.NNArchive(dai.getModelFromZoo(det_desc))
+
+    det_w = det_archive.getInputWidth()
+    det_h = det_archive.getInputHeight()
+
+    eye_model_description = dai.NNModelDescription(EYE_MODEL)
+    eye_model_description.platform = platform
+    eye_model_nn_archive = dai.NNArchive(dai.getModelFromZoo(eye_model_description,
+                                                             apiKey=args.api_key))
+
+    crop_h = eye_model_nn_archive.getInputHeight()
+    crop_w = eye_model_nn_archive.getInputWidth()
 
     if args.media_path:
         replay = pipeline.create(dai.node.ReplayVideo)
@@ -46,10 +57,10 @@ with dai.Pipeline(device) as pipeline:
 
     # stage1 resize + NN
     resize1 = pipeline.create(dai.node.ImageManip)
-    resize1.setMaxOutputFrameSize(det_archive.getInputWidth() * det_archive.getInputHeight() * 3)
+    resize1.setMaxOutputFrameSize(det_w * det_h * 3)
     resize1.initialConfig.setOutputSize(
-        det_archive.getInputWidth(),
-        det_archive.getInputHeight(),
+        det_w,
+        det_h,
         mode=dai.ImageManipConfig.ResizeMode.STRETCH,
     )
     resize1.initialConfig.setFrameType(frame_type)
@@ -60,8 +71,7 @@ with dai.Pipeline(device) as pipeline:
     # make configs for crops
     proc = pipeline.create(ProcessDetections).build(
         detections_input=stage1_nn.out,
-        padding=PADDING,
-        target_size=(CROP_OUT_W, CROP_OUT_H),
+        target_size=(crop_w, crop_h),
     )
 
     script = pipeline.create(dai.node.Script)
@@ -71,12 +81,12 @@ with dai.Pipeline(device) as pipeline:
     proc.num_configs_output.link(script.inputs["num_configs_input"])
 
     face_crop_disp = pipeline.create(dai.node.ImageManip)
-    face_crop_disp.setMaxOutputFrameSize(CROP_OUT_W * CROP_OUT_H * 3)
-    face_crop_disp.initialConfig.setOutputSize(CROP_OUT_W, CROP_OUT_H)
+    face_crop_disp.setMaxOutputFrameSize(crop_w * crop_h * 3)
+    face_crop_disp.initialConfig.setOutputSize(crop_w, crop_h)
     face_crop_disp.initialConfig.setFrameType(frame_type)
-    face_crop_disp.inputConfig.setMaxSize(300)
-    face_crop_disp.inputImage.setMaxSize(300)
-    face_crop_disp.setNumFramesPool(300)
+    face_crop_disp.inputConfig.setMaxSize(30)
+    face_crop_disp.inputImage.setMaxSize(30)
+    face_crop_disp.setNumFramesPool(30)
     face_crop_disp.inputConfig.setWaitForMessage(True)
 
     script.outputs["output_config"].link(face_crop_disp.inputConfig)
@@ -84,11 +94,11 @@ with dai.Pipeline(device) as pipeline:
 
     # stage2 on SAME crops
     face_crop_to_nn = pipeline.create(dai.node.ImageManip)
-    face_crop_to_nn.setMaxOutputFrameSize(CROP_OUT_W * CROP_OUT_H * 3)
-    face_crop_to_nn.initialConfig.setOutputSize(CROP_OUT_W, CROP_OUT_H)
+    face_crop_to_nn.setMaxOutputFrameSize(crop_w * crop_h * 3)
+    face_crop_to_nn.initialConfig.setOutputSize(crop_w, crop_h)
     face_crop_disp.out.link(face_crop_to_nn.inputImage)
 
-    stage2_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(face_crop_to_nn.out, det_archive)
+    stage2_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(face_crop_to_nn.out, eye_model_nn_archive)
 
     # gather for full-frame eye overlay
     gather = pipeline.create(GatherData).build(args.fps_limit)
@@ -102,19 +112,18 @@ with dai.Pipeline(device) as pipeline:
     # grid from crop stream
     grid_layout = pipeline.create(GridLayoutNode).build(
         crops_input=gather_crops.out,
-        target_size=(CROP_OUT_W, CROP_OUT_H),
+        target_size=(crop_w, crop_h),
         frame_type = frame_type,
     )
     grid_layout.frame_type = frame_type
 
     # annotations
-    eye_full = pipeline.create(AnnotationNode).build(gather.out, padding=PADDING)
+    eye_full = pipeline.create(AnnotationNode).build(gather.out)
 
     grid_eyes = pipeline.create(GridEyesAnnotationNode).build(
         gathered_pair_out=gather.out,
-        mosaic_size=(CROP_OUT_W, CROP_OUT_H),
-        crop_size=(CROP_OUT_W, CROP_OUT_H),
-        eye_scale=0.35,
+        mosaic_size=(crop_w, crop_h),
+        crop_size=(crop_w, crop_h),
     )
 
     video_enc = pipeline.create(dai.node.VideoEncoder)
@@ -134,7 +143,7 @@ with dai.Pipeline(device) as pipeline:
 
     visualizer.addTopic("Video", video_enc.out, "images")
     visualizer.addTopic("Face Mosaic", grid_layout.output, "images")
-    visualizer.addTopic("Eyes (Full)", eye_full.out, "annotations")
+    visualizer.addTopic("Face stage 1", eye_full.out, "annotations")
     visualizer.addTopic("Eyes (Crops)", grid_eyes.out, "annotations")
 
     pipeline.start()

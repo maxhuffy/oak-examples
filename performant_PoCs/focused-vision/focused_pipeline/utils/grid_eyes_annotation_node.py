@@ -1,132 +1,120 @@
 from typing import List, Tuple
 import depthai as dai
-from depthai_nodes import ImgDetectionsExtended
 from depthai_nodes.utils import AnnotationHelper
-from .grid_layout_node import _layout_rects  # reuse the exact layout
+from .grid_layout_node import _layout_rects
+from depthai_nodes.message.gathered_data import GatheredData
 
 
 class GridEyesAnnotationNode(dai.node.HostNode):
     """
-    Draw eye squares for each crop onto a single mosaic-sized annotation.
+    Draw boxes from each crop onto a single mosaic-sized annotation.
 
     Input (via link_args): GatherData bundle
-        - msg.reference_data : stage-1 dets (ImgDetectionsExtended)  [used for ts/seq only]
-        - msg.gathered       : List[ImgDetectionsExtended] from stage-2 on crops
+        - msg.reference_data : stage-1 dets (used for ts/seq only)
+        - msg.gathered       : List[...] from stage-2 on crops
+          (expects each item to have `.detections` with d.xmin/ymin/xmax/ymax in 0..1 crop space)
     Output:
         - self.out : annotation buffer, stamped with reference ts/seq
     """
 
     def __init__(self):
         super().__init__()
-
         self.mosaic_w = self.mosaic_h = None
         self.crop_w = self.crop_h = None
-        self.EYE_SCALE = 0.35
 
     def build(
-            self,
-            gathered_pair_out: dai.Node.Output,
-            mosaic_size: Tuple[int, int],
-            crop_size: Tuple[int, int],
-            eye_scale: float = 0.35,
+        self,
+        gathered_pair_out: dai.Node.Output,
+        mosaic_size: Tuple[int, int],
+        crop_size: Tuple[int, int],
     ) -> "GridEyesAnnotationNode":
         self.mosaic_w, self.mosaic_h = map(int, mosaic_size)
         self.crop_w, self.crop_h = map(int, crop_size)
-        self.EYE_SCALE = float(eye_scale)
         self.link_args(gathered_pair_out)
         return self
 
     @staticmethod
-    def _tile_letterbox_params(tile_w: int, tile_h: int, crop_w: int, crop_h: int):
+    def _letterbox(tile_w: int, tile_h: int, crop_w: int, crop_h: int):
         """
-        Mirror utils/grid_layout_node._fit_letterbox:
-        scale to fit, then center inside tile.
+        Scale crop to fit inside tile and center (letterbox).
         Returns (s, x0, y0) where:
-          - s  : scale factor
-          - x0 : left offset inside tile
-          - y0 : top offset inside tile
+          s  : scale factor
+          x0 : left offset inside tile
+          y0 : top offset inside tile
         """
         s = min(tile_w / max(1, crop_w), tile_h / max(1, crop_h))
         x0 = (tile_w - int(crop_w * s)) // 2
         y0 = (tile_h - int(crop_h * s)) // 2
         return s, x0, y0
 
-    def _draw_eye_squares(
-            self,
-            ann: AnnotationHelper,
-            face_w_norm: float,
-            face_h_norm: float,
-            kps: List[Tuple[float, float]],  # [(kx, ky) ...] in crop-normalized 0..1
-            tile_x: int, tile_y: int, tile_w: int, tile_h: int,
+    def _draw_boxes_on_tile(
+        self,
+        ann: AnnotationHelper,
+        boxes_crop_norm: List[Tuple[float, float, float, float]],
+        tile_x: int, tile_y: int, tile_w: int, tile_h: int,
     ):
-        # Letterbox params for this tile
-        s, x0, y0 = self._tile_letterbox_params(tile_w, tile_h, self.crop_w, self.crop_h)
+        """
+        Map crop boxes → tile px (with letterbox) → mosaic-normalized, then draw.
+        """
+        s, x0, y0 = self._letterbox(tile_w, tile_h, self.crop_w, self.crop_h)
 
-        # Face size in mosaic pixels (crop-normalized -> crop px -> scaled into tile)
-        face_w_px = face_w_norm * self.crop_w * s
-        face_h_px = face_h_norm * self.crop_h * s
-        side_px = max(6, int(min(face_w_px, face_h_px) * self.EYE_SCALE))
-
-        half_w_n = (side_px / self.mosaic_w) / 2.0
-        half_h_n = (side_px / self.mosaic_h) / 2.0
-
-        # Draw for first two kps (left/right eyes)
-        for kx, ky in kps[:2]:
+        for nx1, ny1, nx2, ny2 in boxes_crop_norm:
             # crop-normalized -> crop px
-            cx = kx * self.crop_w
-            cy = ky * self.crop_h
+            cx1, cy1 = nx1 * self.crop_w, ny1 * self.crop_h
+            cx2, cy2 = nx2 * self.crop_w, ny2 * self.crop_h
             # crop px -> tile px with letterbox
-            tx = x0 + int(cx * s)
-            ty = y0 + int(cy * s)
+            tx1 = x0 + int(cx1 * s)
+            ty1 = y0 + int(cy1 * s)
+            tx2 = x0 + int(cx2 * s)
+            ty2 = y0 + int(cy2 * s)
             # tile px -> mosaic-normalized
-            mx = (tile_x + tx) / self.mosaic_w
-            my = (tile_y + ty) / self.mosaic_h
-            ann.draw_rectangle(
-                [mx - half_w_n, my - half_h_n],
-                [mx + half_w_n, my + half_h_n]
-            )
+            mx1 = (tile_x + tx1) / self.mosaic_w
+            my1 = (tile_y + ty1) / self.mosaic_h
+            mx2 = (tile_x + tx2) / self.mosaic_w
+            my2 = (tile_y + ty2) / self.mosaic_h
+            ann.draw_rectangle([mx1, my1], [mx2, my2])
 
     def process(self, msg) -> None:
-        ref = getattr(msg, "reference_data", None)
-        if not isinstance(ref, ImgDetectionsExtended):
-            return
+        if isinstance(msg, GatheredData):
+            ref = msg.reference_data
+            gathered = msg.gathered
+        else:
+            ref = None
+            gathered = []
 
-        # Stage-2 results per crop (same order as crops/layout)
-        gathered = getattr(msg, "gathered", []) or []
+        if not gathered:
+            out = AnnotationHelper().build(timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum()) if ref else AnnotationHelper().build()
+            self.out.send(out)
+            return
 
         ann = AnnotationHelper()
 
-        # Decide tile layout from number of stage-2 results we have
+        # Compute grid tiles
         layout = _layout_rects(len(gathered))
 
         for i, crop_msg in enumerate(gathered):
             if i >= len(layout):
                 break
-            if not isinstance(crop_msg, ImgDetectionsExtended):
-                continue
-            if not crop_msg.detections:
+            dets = getattr(crop_msg, "detections", None)
+            if not dets:
                 continue
 
-            # Tile rectangle in mosaic pixels
             x, y, w, h = layout[i]
             tile_x = int(x * self.mosaic_w)
             tile_y = int(y * self.mosaic_h)
             tile_w = max(1, int(w * self.mosaic_w))
             tile_h = max(1, int(h * self.mosaic_h))
 
-            # Use STAGE-2 crops face size for square sizing
-            det2 = crop_msg.detections[0]  # expected 1 per crop
-            face_w_norm = det2.rotated_rect.size.width
-            face_h_norm = det2.rotated_rect.size.height
+            boxes: List[Tuple[float, float, float, float]] = []
+            for d in dets:
+                boxes.append((float(d.xmin), float(d.ymin), float(d.xmax), float(d.ymax)))
+            if not boxes:
+                continue
 
-            # Keypoints in crop-normalized coords 0..1
-            kps = [(kp.x, kp.y) for kp in det2.keypoints[:2]]
+            self._draw_boxes_on_tile(ann, boxes, tile_x, tile_y, tile_w, tile_h)
 
-            # Draw two eye squares onto the mosaic canvas
-            self._draw_eye_squares(
-                ann, face_w_norm, face_h_norm, kps,
-                tile_x, tile_y, tile_w, tile_h
-            )
-
-        out = ann.build(timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum())
+        if ref is not None:
+            out = ann.build(timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum())
+        else:
+            out = ann.build()
         self.out.send(out)
