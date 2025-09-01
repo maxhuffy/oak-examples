@@ -1,14 +1,13 @@
-import inspect
 from pathlib import Path
 
 import depthai as dai
-from depthai_nodes.node import GatherData, ParsingNeuralNetwork
+from depthai_nodes.node import GatherData, ParsingNeuralNetwork, ImgDetectionsBridge
+from depthai_nodes.node.utils import generate_script_content
 
 from focused_pipeline.utils.annotation_node import AnnotationNode
 from focused_pipeline.utils.grid_eyes_annotation_node import GridEyesAnnotationNode
 from focused_pipeline.utils.arguments import initialize_argparser
 from focused_pipeline.utils.grid_layout_node import GridLayoutNode
-from focused_pipeline.utils.process import ProcessDetections
 from non_focused_pipeline.utils.annotation_node import AnnotationNode as NonFocusedAnnotationNode
 
 _, args = initialize_argparser()
@@ -85,17 +84,17 @@ with dai.Pipeline(device) as pipeline:
         resize_node.out, eye_model_nn_archive
     )
 
-    # make configs for crops
-    proc = pipeline.create(ProcessDetections).build(
-        detections_input=stage1_nn.out,
-        target_size=(crop_w, crop_h),
-    )
-
+    det_bridge = pipeline.create(ImgDetectionsBridge).build(
+        stage1_nn.out
+    )  # TODO: remove once we have it working with ImgDetectionsExtended
     script = pipeline.create(dai.node.Script)
-    script.setScriptPath(str(Path(__file__).parent / "focused_pipeline/utils/script.py"))
-    input_node.link(script.inputs["frame_input"])
-    proc.config_output.link(script.inputs["config_input"])
-    proc.num_configs_output.link(script.inputs["num_configs_input"])
+    det_bridge.out.link(script.inputs["det_in"])
+    input_node.link(script.inputs["preview"])
+    script_content = generate_script_content(
+        resize_width=crop_w,
+        resize_height=crop_h,
+    )
+    script.setScript(script_content)
 
     face_crop_disp = pipeline.create(dai.node.ImageManip)
     face_crop_disp.setMaxOutputFrameSize(crop_w * crop_h * 3)
@@ -106,8 +105,8 @@ with dai.Pipeline(device) as pipeline:
     face_crop_disp.setNumFramesPool(30)
     face_crop_disp.inputConfig.setWaitForMessage(True)
 
-    script.outputs["output_config"].link(face_crop_disp.inputConfig)
-    script.outputs["output_frame"].link(face_crop_disp.inputImage)
+    script.outputs["manip_cfg"].link(face_crop_disp.inputConfig)
+    script.outputs["manip_img"].link(face_crop_disp.inputImage)
 
     # stage2 on SAME crops
     face_crop_to_nn = pipeline.create(dai.node.ImageManip)
