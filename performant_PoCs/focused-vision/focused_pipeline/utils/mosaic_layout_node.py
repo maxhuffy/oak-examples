@@ -5,7 +5,7 @@ import numpy as np
 import depthai as dai
 
 
-def _layout_rects(n: int) -> List[Tuple[float, float, float, float]]:
+def _compute_mosaic_layout(n: int) -> List[Tuple[float, float, float, float]]:
     """
     Returns a list of (x, y, w, h) tiles in normalized [0..1] coords.
     Simple, deterministic layouts for 1..N items with up to 3 columns.
@@ -64,7 +64,6 @@ def _fit_letterbox(img: np.ndarray, W: int, H: int) -> np.ndarray:
     canvas[y0:y0 + nh, x0:x0 + nw] = resized
     return canvas
 
-
 def _mosaic_from_frames(
     frames: List[dai.ImgFrame],
     out_w: int,
@@ -73,22 +72,21 @@ def _mosaic_from_frames(
 ) -> dai.ImgFrame:
     """
     Compose a mosaic from a list of ImgFrames (assumed BGR/BGRA/GRAY).
-    Does not set timestamp/seq — caller should stamp from the GatherData reference.
     """
     canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
 
     if frames:
-        mats: List[np.ndarray] = []
+        matrices: List[np.ndarray] = []
         for fr in frames:
             img = fr.getCvFrame()
             if img.ndim == 2:
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
             elif img.ndim == 3 and img.shape[2] == 4:
                 img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-            mats.append(img)
+            matrices.append(img)
 
-        layout = _layout_rects(len(mats))
-        for (x, y, w, h), img in zip(layout, mats):
+        layout = _compute_mosaic_layout(len(matrices))
+        for (x, y, w, h), img in zip(layout, matrices):
             W = max(1, int(w * out_w))
             H = max(1, int(h * out_h))
             X = int(x * out_w)
@@ -104,7 +102,7 @@ def _mosaic_from_frames(
     return out
 
 
-class GridLayoutNode(dai.node.HostNode):
+class MosaicLayoutNode(dai.node.HostNode):
     """
     Builds a single mosaic image from a GatherData bundle of crop frames.
 
@@ -123,9 +121,9 @@ class GridLayoutNode(dai.node.HostNode):
 
         self._target_w = 1920
         self._target_h = 1080
-        self.frame_type = None
+        self._frame_type = None
 
-    def build(self, crops_input: dai.Node.Output, target_size: Tuple[int, int], frame_type: dai.ImgFrame.Type) -> "GridLayoutNode":
+    def build(self, crops_input: dai.Node.Output, target_size: Tuple[int, int], frame_type: dai.ImgFrame.Type) -> "MosaicLayoutNode":
         self._target_w, self._target_h = map(int, target_size)
         self.link_args(crops_input)
         self.frame_type = frame_type

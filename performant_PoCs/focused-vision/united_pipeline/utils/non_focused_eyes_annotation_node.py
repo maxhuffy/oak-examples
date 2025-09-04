@@ -1,11 +1,12 @@
 import depthai as dai
 from depthai_nodes.utils import AnnotationHelper
 
-class AnnotationNode(dai.node.HostNode):
+
+class NonFocusedEyesAnnotationNode(dai.node.HostNode):
     def __init__(self) -> None:
         super().__init__()
 
-    def build(self, detections_out: dai.Node.Output) -> "AnnotationNode":
+    def build(self, detections_out: dai.Node.Output) -> "NonFocusedEyesAnnotationNode":
         self.link_args(detections_out)
         return self
 
