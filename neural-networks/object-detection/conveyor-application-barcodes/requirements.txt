@@ -1,0 +1,7 @@
+depthai == 3.0.0rc4
+depthai-nodes
+numpy
+opencv-python
+pyzbar
+Pillow
+zxing-cpp
