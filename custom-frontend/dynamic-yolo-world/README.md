@@ -24,6 +24,8 @@ Here is a list of all available parameters:
 -p PORT, --port PORT  Port to serve the frontend on. (default: None)
 -n MODEL_NAME, --model-name MODEL_NAME
 					Name of the model to use: yolo-world, yoloe, or yoloe-image (default: yolo-world)
+--precision PRECISION
+					Model precision for YOLOE models: int8 (default) or fp16. fp16 disables input quantization.
 ```
 
 ### Model Options
