@@ -37,6 +37,7 @@ This example supports three different YOLO models:
 - **YOLOE-Image**: Visual-prompt-only variant of YOLOE. Uses a visual prompt encoder to extract embeddings from an image mask and applies them as class features. If no mask is provided, a default central mask is used. Visual encoder reference: [YOLOE visual encoder ONNX](https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/blob/main/yoloe-v8l-seg_visual_encoder.onnx).
 
 Notes:
+
 - Backend function `extract_image_prompt_embeddings(image, max_num_classes=80, model_name, mask_prompt=None)` accepts an optional `mask_prompt` of shape `(80,80)` or `(1,1,80,80)` for `yoloe-image`. When `None`, a default central mask is used.
 
 ### Prerequisites

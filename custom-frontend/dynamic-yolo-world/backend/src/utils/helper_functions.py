@@ -25,7 +25,9 @@ QUANT_VALUES = {
 }
 
 
-def pad_and_quantize_features(features, max_num_classes=80, model_name="yolo-world", precision="int8"):
+def pad_and_quantize_features(
+    features, max_num_classes=80, model_name="yolo-world", precision="int8"
+):
     """
     Pad features to (1, 512, max_num_classes) and quantize if precision is int8.
     For FP16, return padded float16 features (no quantization).
@@ -45,7 +47,9 @@ def pad_and_quantize_features(features, max_num_classes=80, model_name="yolo-wor
     return quantized_features
 
 
-def extract_text_embeddings(class_names, max_num_classes=80, model_name="yolo-world", precision="int8"):
+def extract_text_embeddings(
+    class_names, max_num_classes=80, model_name="yolo-world", precision="int8"
+):
     tokenizer_json_path = download_tokenizer(
         url="https://huggingface.co/openai/clip-vit-base-patch32/resolve/main/tokenizer.json",
         save_path="tokenizer.json",
@@ -120,7 +124,13 @@ def extract_text_embeddings(class_names, max_num_classes=80, model_name="yolo-wo
     return text_features
 
 
-def extract_image_prompt_embeddings(image, max_num_classes=80, model_name="yolo-world", mask_prompt=None, precision="int8"):
+def extract_image_prompt_embeddings(
+    image,
+    max_num_classes=80,
+    model_name="yolo-world",
+    mask_prompt=None,
+    precision="int8",
+):
     # Select model and preprocess accordingly
     if model_name == "yoloe-image":
         image_resized = cv2.resize(image, (640, 640))
@@ -159,7 +169,9 @@ def extract_image_prompt_embeddings(image, max_num_classes=80, model_name="yolo-
             prompts = np.asarray(mask_prompt, dtype=np.float32)
             if prompts.ndim == 2:
                 if prompts.shape != (80, 80):
-                    prompts = cv2.resize(prompts, (80, 80), interpolation=cv2.INTER_NEAREST)
+                    prompts = cv2.resize(
+                        prompts, (80, 80), interpolation=cv2.INTER_NEAREST
+                    )
                 prompts = prompts[None, None, :, :]
             elif prompts.shape == (1, 1, 80, 80):
                 pass

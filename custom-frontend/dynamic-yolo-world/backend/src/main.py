@@ -36,7 +36,6 @@ frame_type = dai.ImgFrame.Type.BGR888i
 # choose initial features: text for yolo-world/yoloe, visual for yoloe-image
 if args.model_name == "yoloe-image":
     import numpy as np
-    import cv2
 
     placeholder = np.zeros((224, 224, 3), dtype=np.uint8)
     text_features = extract_image_prompt_embeddings(
@@ -140,7 +139,9 @@ with dai.Pipeline(device) as pipeline:
     def class_update_service(new_classes: list[str]):
         """Changes classes to detect based on the user input"""
         if args.model_name == "yoloe-image":
-            print("Class update is disabled in yoloe-image mode. Upload a new image prompt instead.")
+            print(
+                "Class update is disabled in yoloe-image mode. Upload a new image prompt instead."
+            )
             return
         if len(new_classes) == 0:
             print("List of new classes empty, skipping.")
@@ -164,7 +165,8 @@ with dai.Pipeline(device) as pipeline:
             text_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model_name in ("yoloe", "yoloe-image") and args.precision == "fp16"
+                if args.model_name in ("yoloe", "yoloe-image")
+                and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
         )
@@ -194,7 +196,8 @@ with dai.Pipeline(device) as pipeline:
             image_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model_name in ("yoloe", "yoloe-image") and args.precision == "fp16"
+                if args.model_name in ("yoloe", "yoloe-image")
+                and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
         )
