@@ -33,9 +33,19 @@ if platform != "RVC4":
     raise ValueError("This example is supported only on RVC4 platform")
 
 frame_type = dai.ImgFrame.Type.BGR888i
-text_features = extract_text_embeddings(
-    class_names=CLASS_NAMES, max_num_classes=MAX_NUM_CLASSES, model_name=args.model_name
-)
+# choose initial features: text for yolo-world/yoloe, visual for yoloe-image
+if args.model_name == "yoloe-image":
+    # start with a blank single-class visual prompt; user can upload an image to replace it
+    import numpy as np
+    import cv2
+
+    placeholder = np.zeros((224, 224, 3), dtype=np.uint8)
+    text_features = extract_image_prompt_embeddings(placeholder, max_num_classes=MAX_NUM_CLASSES, model_name=args.model_name)
+    CLASS_NAMES = ["image_prompt"]
+else:
+    text_features = extract_text_embeddings(
+        class_names=CLASS_NAMES, max_num_classes=MAX_NUM_CLASSES, model_name=args.model_name
+    )
 
 if args.fps_limit is None:
     args.fps_limit = 5
@@ -55,6 +65,11 @@ with dai.Pipeline(device) as pipeline:
     elif args.model_name == "yoloe":
         model_description = dai.NNModelDescription.fromYamlFile(
             f"yoloe_v8_l.{platform}.yaml"
+        )
+    # yoloe-image model (visual prompts only)
+    elif args.model_name == "yoloe-image":
+        model_description = dai.NNModelDescription.fromYamlFile(
+            f"yoloe_v8_l_image.{platform}.yaml"
         )
     model_description.platform = platform
     model_nn_archive = dai.NNArchive(dai.getModelFromZoo(model_description))
@@ -103,7 +118,7 @@ with dai.Pipeline(device) as pipeline:
     # visualization
     if args.model_name == "yolo-world":
         visualizer.addTopic("Video", nn_with_parser.passthroughs["images"])
-    elif args.model_name == "yoloe":
+    elif args.model_name in ("yoloe", "yoloe-image"):
         apply_colormap_node = pipeline.create(ApplyColormap).build(nn_with_parser.out)
         # overlay frames
         overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
@@ -116,6 +131,9 @@ with dai.Pipeline(device) as pipeline:
 
     def class_update_service(new_classes: list[str]):
         """Changes classes to detect based on the user input"""
+        if args.model_name == "yoloe-image":
+            print("Class update is disabled in yoloe-image mode. Upload a new image prompt instead.")
+            return
         if len(new_classes) == 0:
             print("List of new classes empty, skipping.")
             return
@@ -151,7 +169,7 @@ with dai.Pipeline(device) as pipeline:
 
     def image_upload_service(image_data):
         image = base64_to_cv2_image(image_data["data"])
-        image_features = extract_image_prompt_embeddings(image)
+        image_features = extract_image_prompt_embeddings(image, model_name=args.model_name)
         print("Image features extracted, sending to model...")
         inputNNData = dai.NNData()
         inputNNData.addTensor(
@@ -173,6 +191,9 @@ with dai.Pipeline(device) as pipeline:
         "Threshold Update Service", conf_threshold_update_service
     )
     if args.model_name == "yolo-world":
+        visualizer.registerService("Image Upload Service", image_upload_service)
+    elif args.model_name == "yoloe-image":
+        # visual-prompt-only mode: allow image upload to set prompt and label name
         visualizer.registerService("Image Upload Service", image_upload_service)
 
     print("Pipeline created.")

@@ -18,6 +18,10 @@ QUANT_VALUES = {
         "quant_zero_point": 174.0,
         "quant_scale": 0.003328413470,
     },
+    "yoloe-image": {
+        "quant_zero_point": 137.0,
+        "quant_scale": 0.002327915514,
+    },
 }
 
 
@@ -118,13 +122,26 @@ def extract_text_embeddings(class_names, max_num_classes=80, model_name="yolo-wo
     return text_features
 
 
-def extract_image_prompt_embeddings(image, max_num_classes=80):
-    input_tensor = preprocess_image(image)
+def extract_image_prompt_embeddings(image, max_num_classes=80, model_name="yolo-world", mask_prompt=None):
+    if model_name == "yoloe-image":
+        image_resized = cv2.resize(image, (640, 640))
+        image_array = image_resized.astype(np.float32) / 255.0
+        image_array = np.transpose(image_array, (2, 0, 1))
+        input_tensor = np.expand_dims(image_array, axis=0).astype(np.float32)
+        model_url = (
+            "https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/resolve/main/"
+            "yoloe-v8l-seg_visual_encoder.onnx"
+        )
+        model_path = "yoloe-v8l-seg_visual_encoder.onnx"
+    else:
+        input_tensor = preprocess_image(image)
+        model_url = (
+            "https://huggingface.co/sokovninn/clip-visual-with-projector/resolve/main/"
+            "clip_visual_with_projector.onnx"
+        )
+        model_path = "clip_visual_with_projector.onnx"
 
-    onnx_model_path = download_model(
-        "https://huggingface.co/sokovninn/clip-visual-with-projector/resolve/main/clip_visual_with_projector.onnx",
-        "clip_visual_with_projector.onnx",
-    )
+    onnx_model_path = download_model(model_url, model_path)
 
     session = onnxruntime.InferenceSession(
         onnx_model_path,
@@ -135,13 +152,30 @@ def extract_image_prompt_embeddings(image, max_num_classes=80):
         ],
     )
 
-    input_name = session.get_inputs()[0].name
-    outputs = session.run(None, {input_name: input_tensor})
-    image_embeddings = outputs[0]  # Shape: (1, 512)
+    if model_name == "yoloe-image":
+        if mask_prompt is None:
+            prompts = np.zeros((1, 1, 80, 80), dtype=np.float32)
+            prompts[0, 0, 5:75, 5:75] = 1.0
+        else:
+            prompts = np.asarray(mask_prompt, dtype=np.float32)
+            if prompts.ndim == 2:
+                if prompts.shape != (80, 80):
+                    prompts = cv2.resize(prompts, (80, 80), interpolation=cv2.INTER_NEAREST)
+                prompts = prompts[None, None, :, :]
+            elif prompts.shape == (1, 1, 80, 80):
+                pass
+            else:
+                raise ValueError("mask_prompt must have shape (80,80) or (1,1,80,80)")
 
-    image_embeddings = image_embeddings.squeeze(0).reshape(1, -1)  # Shape: (1, 512)
+        outputs = session.run(None, {"images": input_tensor, "prompts": prompts})
+    else:
+        input_name = session.get_inputs()[0].name
+        outputs = session.run(None, {input_name: input_tensor})
 
-    image_features = pad_and_quantize_features(image_embeddings, max_num_classes)
+    image_embeddings = outputs[0].squeeze(0).reshape(1, -1)
+    image_features = pad_and_quantize_features(
+        image_embeddings, max_num_classes, model_name
+    )
 
     del session
 

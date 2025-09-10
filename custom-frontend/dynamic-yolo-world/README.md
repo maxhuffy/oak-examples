@@ -1,6 +1,6 @@
 # Dynamic YOLO World/YOLOE
 
-This example demonstrates an advanced use of a custom frontend. On the DepthAI backend, it runs either the **YOLO-World** (default) or **YOLOE** model on-device, with configurable class labels and confidence threshold — both controllable via the frontend.
+This example demonstrates an advanced use of a custom frontend. On the DepthAI backend, it runs either the **YOLO-World** (default), **YOLOE**, or **YOLOE-Image** model on-device, with configurable class labels and confidence threshold — both controllable via the frontend.
 The frontend, built using the `@luxonis/depthai-viewer-common` package, displays a real-time video stream with detections. It is combined with the [default oakapp docker image](https://hub.docker.com/r/luxonis/oakapp-base), which enables remote access via WebRTC.
 
 > **Note:** This example works only on RVC4 in standalone mode.
@@ -23,15 +23,19 @@ Here is a list of all available parameters:
 -ip IP, --ip IP       IP address to serve the frontend on. (default: None)
 -p PORT, --port PORT  Port to serve the frontend on. (default: None)
 -n MODEL_NAME, --model-name MODEL_NAME
-					Name of the model to use: yolo-world or yoloe (default: yolo-world)
+					Name of the model to use: yolo-world, yoloe, or yoloe-image (default: yolo-world)
 ```
 
 ### Model Options
 
-This example supports two different YOLO models:
+This example supports three different YOLO models:
 
-- **YOLO-World** (default): An open-vocabulary object detection model that supports both text-based class definitions and image-based prompting (upload an image to detect similar objects)
-- **YOLOE**: A fast and efficient object detection model with enhanced visualization features including instance segmentation
+- **YOLO-World** (default): Open-vocabulary detection with text prompts and optional image prompting (CLIP visual encoder).
+- **YOLOE**: Fast detection with enhanced visualization, including instance segmentation.
+- **YOLOE-Image**: Visual-prompt-only variant of YOLOE. Uses a visual prompt encoder to extract embeddings from an image mask and applies them as class features. If no mask is provided, a default central mask is used. Visual encoder reference: [YOLOE visual encoder ONNX](https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/blob/main/yoloe-v8l-seg_visual_encoder.onnx).
+
+Notes:
+- Backend function `extract_image_prompt_embeddings(image, max_num_classes=80, model_name, mask_prompt=None)` accepts an optional `mask_prompt` of shape `(80,80)` or `(1,1,80,80)` for `yoloe-image`. When `None`, a default central mask is used.
 
 ### Prerequisites
 
