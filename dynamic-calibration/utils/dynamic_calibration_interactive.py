@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+import numpy as np
+import cv2
 
 import depthai as dai
-import cv2
-import numpy as np
-from helper_functions import *
+from helper_functions import update_master_frame, overlay_coverage_on_gray, draw_recalibration_message, draw_health_bar, display_text, draw_key_commands, print_final_calibration_results
+
 
 mouse_coords = (-1, -1)
 def on_mouse_disparity(event, x, y, flags, param):

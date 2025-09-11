@@ -142,7 +142,7 @@ Afterwards, navigate to desired application as listed below
   </tr>
 </table>
 
-### [🔄 Dynamic Calibration](dynamic-calibration/)
+### [⚙️ Dynamic Calibration](dynamic-calibration/)
 
 <table>
   <tr>

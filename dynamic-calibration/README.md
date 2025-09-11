@@ -22,7 +22,6 @@ This example demonstrates **runtime stereo camera calibration** with the `Dynami
 ## Requirements
 
 - A **Luxonis device** connected via USB/Ethernet.
-- Python **3.10+** (tested with 3.12).
 - Packages:
   - `depthai`
   - `depthai-nodes`
@@ -49,41 +48,6 @@ When launched, the app starts a RemoteConnection server. Open the visualizer at:
 http://localhost:8082
 ```
 Replace `localhost` with your host IP if viewing from another machine.
-
-## Wiring Notes (snippet)
-
-Make sure to:
-1) Link a preview stream for timestamped overlays (e.g., colormapped disparity/depth),
-2) Link a raw depth OR disparity stream to the controller (for the ROI HUD),
-3) Provide the **device** handle to enable flashing.
-
-```python
-visualizer = dai.RemoteConnection(httpPort=8082)
-device = pipeline.getDefaultDevice()
-
-stereo = pipeline.create(dai.node.StereoDepth)
-# ... set stereo configs, link left/right, etc.
-
-# Colormap for display
-depth_color = pipeline.create(ApplyColormap).build(stereo.disparity)  # or stereo.depth
-depth_color.setColormap(cv2.COLORMAP_JET)
-
-# Dynamic calibration node
-dyn_calib = pipeline.create(dai.node.DynamicCalibration)
-left_out.link(dyn_calib.left)
-right_out.link(dyn_calib.right)
-
-# Controller
-dyn_ctrl = pipeline.create(DynamicCalibrationControler).build(
-    preview=depth_color.out,     # used for overlay timing
-    depth=stereo.depth           # or .disparity; call set_depth_units_is_mm(False) if disparity
-)
-dyn_ctrl.set_command_input(dyn_calib.inputControl.createInputQueue())
-dyn_ctrl.set_quality_output(dyn_calib.qualityOutput.createOutputQueue())
-dyn_ctrl.set_calibration_output(dyn_calib.calibrationOutput.createOutputQueue())
-dyn_ctrl.set_coverage_output(dyn_calib.coverageOutput.createOutputQueue())
-dyn_ctrl.set_device(device)  # enables flashing p/k/f
-```
 
 ## Controls
 

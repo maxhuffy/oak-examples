@@ -6,7 +6,7 @@ def initialize_argparser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.description = "This example showcases one possible approach for measuring the size of a box using DepthAI."
+    parser.description = "This example showcases the capabinility of Dynamic Calibration on OAK devices. " 
 
     parser.add_argument(
         "-d",

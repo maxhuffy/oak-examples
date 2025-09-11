@@ -1,9 +1,9 @@
 from typing import Optional, Tuple
 import numpy as np
-import depthai as dai
-import time  # at top of file
+import time
 
-print(dai.__version__)
+import depthai as dai
+
 class DynamicCalibrationControler(dai.node.HostNode):
     def __init__(self):
         super().__init__()
