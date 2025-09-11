@@ -29,6 +29,7 @@ This example demonstrates **runtime stereo camera calibration** with the `Dynami
   - `numpy`
 
 Install via:
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -44,42 +45,44 @@ python3 main.py --device 18443010C1BA9D1200
 ```
 
 When launched, the app starts a RemoteConnection server. Open the visualizer at:
+
 ```
 http://localhost:8082
 ```
+
 Replace `localhost` with your host IP if viewing from another machine.
 
 ## Controls
 
 Use these keys while the app is running (focus the browser visualizer window):
 
-| Key | Action |
-| --- | ------ |
-| `q` | Quit the app |
-| `h` | Toggle help panel |
-| `g` | Toggle Depth HUD (ROI readout) |
-| `r` | Start recalibration |
-| `d` | **Force** recalibration |
-| `l` | Load image(s) for calibration (shows coverage bar for ~2s) |
-| `c` | Calibration quality check |
-| `v` | **Force** calibration quality check |
-| `n` | Apply **NEW** calibration (when available) |
-| `o` | Apply **PREVIOUS** calibration (rollback) |
-| `p` | **Flash NEW/current** calibration to EEPROM |
-| `k` | **Flash PREVIOUS** calibration to EEPROM |
-| `f` | **Flash FACTORY** calibration to EEPROM |
+| Key         | Action                                                                                   |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `q`         | Quit the app                                                                             |
+| `h`         | Toggle help panel                                                                        |
+| `g`         | Toggle Depth HUD (ROI readout)                                                           |
+| `r`         | Start recalibration                                                                      |
+| `d`         | **Force** recalibration                                                                  |
+| `l`         | Load image(s) for calibration (shows coverage bar for ~2s)                               |
+| `c`         | Calibration quality check                                                                |
+| `v`         | **Force** calibration quality check                                                      |
+| `n`         | Apply **NEW** calibration (when available)                                               |
+| `o`         | Apply **PREVIOUS** calibration (rollback)                                                |
+| `p`         | **Flash NEW/current** calibration to EEPROM                                              |
+| `k`         | **Flash PREVIOUS** calibration to EEPROM                                                 |
+| `f`         | **Flash FACTORY** calibration to EEPROM                                                  |
 | `w / a / s` | Move ROI up/left/down (Depth HUD).<br>**Note:** `d` is reserved for *Force recalibrate*. |
-| `z / x` | ROI size − / + |
+| `z / x`     | ROI size − / +                                                                           |
 
-> **Status banners** appear in the **center** after critical actions (e.g., applying/ flashing calibration) and auto-hide after ~2s.  
+> **Status banners** appear in the **center** after critical actions (e.g., applying/ flashing calibration) and auto-hide after ~2s.\
 > **Modals** (quality/recalibration) also appear centered and auto-hide after ~3.5s or on any key press.
 
 ## On‑screen UI Cheat Sheet
 
-- **Help panel** (top-left): quick reference of all keys (toggle with `h`).  
-- **Coverage bar** (center): big progress bar while collecting frames; also shown briefly (≈2s) after pressing `l`.  
-- **Quality modal** (center): three colored segments (green/yellow/red) with a **downward** pointer (`▼`) indicating rotation-change severity; optional line with depth-error deltas (@1m/2m/5m/10m).  
-- **Recalibration modal** (center): “Recalibration complete”, significant-axis warning (if any), Euler angles, and depth-error deltas; suggests flashing if the change is significant.  
+- **Help panel** (top-left): quick reference of all keys (toggle with `h`).
+- **Coverage bar** (center): big progress bar while collecting frames; also shown briefly (≈2s) after pressing `l`.
+- **Quality modal** (center): three colored segments (green/yellow/red) with a **downward** pointer (`▼`) indicating rotation-change severity; optional line with depth-error deltas (@1m/2m/5m/10m).
+- **Recalibration modal** (center): “Recalibration complete”, significant-axis warning (if any), Euler angles, and depth-error deltas; suggests flashing if the change is significant.
 - **Depth HUD** (inline): shows depth/disp at the ROI center and mean within a tiny box; move with `w/a/s` (and resize with `z/x`).
 
 ## Output (console)
@@ -93,7 +96,7 @@ Use these keys while the app is running (focus the browser visualizer window):
 
 ## Tips & Notes
 
-- To **flash** (EEPROM) from the UI you must pass the `device` into the controller (`dyn_ctrl.set_device(device)`).  
+- To **flash** (EEPROM) from the UI you must pass the `device` into the controller (`dyn_ctrl.set_device(device)`).
 - If you link **disparity** instead of **depth** to the controller, call `dyn_ctrl.set_depth_units_is_mm(False)` so the HUD labels use “Disp” instead of meters.
 - The coverage percentage accepts either `[0..1]` or `[0..100]` from the device; the controller auto-detects and normalizes.
 - The **Collecting frames** bar hides automatically 2s after pressing `l`; during active recalibration (`r`/`d`) it stays up until calibration finishes.
@@ -108,6 +111,6 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
----
+______________________________________________________________________
 
 If you use this as a base for your own app, the heart of the UX is `utils/dynamic_controler.py` — it wires `DynamicCalibration` queues and renders all overlays via `ImgAnnotations` so you don’t need `cv2.imshow()`.

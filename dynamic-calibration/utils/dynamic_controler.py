@@ -4,6 +4,7 @@ import time
 
 import depthai as dai
 
+
 class DynamicCalibrationControler(dai.node.HostNode):
     def __init__(self):
         super().__init__()
@@ -29,15 +30,17 @@ class DynamicCalibrationControler(dai.node.HostNode):
         self.wants_quit = False
         self._show_help = True
 
-        self._calib_q = None            # queue for dyn_calib.calibrationOutput
-        self._last_calib_diff = None    # latest calibrationDifference
-        self.auto_apply_new = True      # set False if you prefer pressing 'n'
+        self._calib_q = None  # queue for dyn_calib.calibrationOutput
+        self._last_calib_diff = None  # latest calibrationDifference
+        self.auto_apply_new = True  # set False if you prefer pressing 'n'
 
         self._coverage_q = None
-        self._coverage_vec = None       # flattened coveragePerCellA (0..1 or 0..100 per cell)
-        self._coverage_pct = 0.0        # mean coverage in %
-        self._data_acquired = 0.0       # dataAcquired from device (0..1 or 0..100)
-        self._collecting = False        # are we currently collecting frames?
+        self._coverage_vec = (
+            None  # flattened coveragePerCellA (0..1 or 0..100 per cell)
+        )
+        self._coverage_pct = 0.0  # mean coverage in %
+        self._data_acquired = 0.0  # dataAcquired from device (0..1 or 0..100)
+        self._collecting = False  # are we currently collecting frames?
         self._collecting_until = 0.0
 
         # transient status banner (2s)
@@ -45,19 +48,21 @@ class DynamicCalibrationControler(dai.node.HostNode):
         self._status_expire_ts = 0.0
 
         # modal overlays (centered), auto-hide or dismiss on key
-        self._modal_kind = None         # None | "recalib" | "quality"
+        self._modal_kind = None  # None | "recalib" | "quality"
         self._modal_expire_ts = 0.0
         self._modal_payload = {}
 
         # depth HUD state
-        self._last_depth = None         # np.ndarray (uint16 depth mm or disparity)
-        self._depth_is_mm = True        # set False if you link disparity
-        self._cursor_xy = None          # (x,y) in depth pixels
-        self._roi_half = 10             # radius in depth pixels (=> (2h+1)^2 window)
-        self._hud_on = True             # toggle with 'g'
+        self._last_depth = None  # np.ndarray (uint16 depth mm or disparity)
+        self._depth_is_mm = True  # set False if you link disparity
+        self._cursor_xy = None  # (x,y) in depth pixels
+        self._roi_half = 10  # radius in depth pixels (=> (2h+1)^2 window)
+        self._hud_on = True  # toggle with 'g'
 
         self.out_annotations = self.createOutput(
-            possibleDatatypes=[dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImgAnnotations, True)]
+            possibleDatatypes=[
+                dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImgAnnotations, True)
+            ]
         )
 
     def set_device(self, device: dai.Device):
@@ -100,7 +105,9 @@ class DynamicCalibrationControler(dai.node.HostNode):
     # ---- helpers ----
     def _send_cmd(self, cmd):
         if self._cmd_q is None:
-            raise RuntimeError("Command queue not set. Call set_command_input(...) after pipeline.start()")
+            raise RuntimeError(
+                "Command queue not set. Call set_command_input(...) after pipeline.start()"
+            )
         self._cmd_q.send(dai.DynamicCalibrationControl(cmd))
 
     def _coverage_bar_text(self, pct: float, width_chars: int = 36) -> str:
@@ -131,7 +138,9 @@ class DynamicCalibrationControler(dai.node.HostNode):
         if self._depth_is_mm:
             valid = roi > 0
             center_val = float(self._last_depth[cy, cx]) / 1000.0  # mm → m
-            mean_val = float(roi[valid].mean() / 1000.0) if np.any(valid) else float("nan")
+            mean_val = (
+                float(roi[valid].mean() / 1000.0) if np.any(valid) else float("nan")
+            )
             val_text = f"Depth: {center_val:.2f} m, ROI mean: {mean_val:.2f} m"
         else:
             center_val = float(self._last_depth[cy, cx])
@@ -143,20 +152,30 @@ class DynamicCalibrationControler(dai.node.HostNode):
         v = (cy + 0.5) / H
 
         # place readout slightly offset
-        hud.texts.append(self._create_text_annot(val_text, (min(u + 0.02, 0.95), min(v + 0.02, 0.95))))
+        hud.texts.append(
+            self._create_text_annot(
+                val_text, (min(u + 0.02, 0.95), min(v + 0.02, 0.95))
+            )
+        )
 
         # "tiny box" corners using text markers (no special rect types needed)
         corner = "□"
         u0, v0 = x0 / W, y0 / H
         u1, v1 = x1 / W, y1 / H
-        hud.texts.append(self._create_text_annot(corner, (u0, v0), bg=(0,0,0,0)))
-        hud.texts.append(self._create_text_annot(corner, (u1, v0), bg=(0,0,0,0)))
-        hud.texts.append(self._create_text_annot(corner, (u0, v1), bg=(0,0,0,0)))
-        hud.texts.append(self._create_text_annot(corner, (u1, v1), bg=(0,0,0,0)))
+        hud.texts.append(self._create_text_annot(corner, (u0, v0), bg=(0, 0, 0, 0)))
+        hud.texts.append(self._create_text_annot(corner, (u1, v0), bg=(0, 0, 0, 0)))
+        hud.texts.append(self._create_text_annot(corner, (u0, v1), bg=(0, 0, 0, 0)))
+        hud.texts.append(self._create_text_annot(corner, (u1, v1), bg=(0, 0, 0, 0)))
 
     # --- styling helpers (white on translucent black) ---
-    def _create_text_annot(self, text: str, pos: Tuple[float, float], size=14,
-                           bg=(0,0,0,0.55), fg=(1,1,1,1)):
+    def _create_text_annot(
+        self,
+        text: str,
+        pos: Tuple[float, float],
+        size=14,
+        bg=(0, 0, 0, 0.55),
+        fg=(1, 1, 1, 1),
+    ):
         t = dai.TextAnnotation()
         t.fontSize = size
         t.backgroundColor = dai.Color(*bg)
@@ -166,9 +185,18 @@ class DynamicCalibrationControler(dai.node.HostNode):
         return t
 
     # --- centered panels / modals ---
-    def _push_center_panel(self, img_annots: dai.ImgAnnotations, lines, *,
-                           y_center=0.50, width=0.74, line_size=20, line_gap=0.035,
-                           accent_idx=None, accent_colors=None):
+    def _push_center_panel(
+        self,
+        img_annots: dai.ImgAnnotations,
+        lines,
+        *,
+        y_center=0.50,
+        width=0.74,
+        line_size=20,
+        line_gap=0.035,
+        accent_idx=None,
+        accent_colors=None,
+    ):
         """
         Draws a centered panel with a single translucent background slab and multiple lines.
         `accent_idx`: set of indices to color differently (e.g., titles/warnings).
@@ -180,22 +208,31 @@ class DynamicCalibrationControler(dai.node.HostNode):
         x_text = x0 + 0.15
         n = len(lines)
         total_h = n * line_gap
-        y0 = y_center - total_h/2
+        y0 = y_center - total_h / 2
 
         # foreground text
         hud = dai.ImgAnnotation()
         for i, line in enumerate(lines):
-            fg = (1,1,1,1)
+            fg = (1, 1, 1, 1)
             if accent_idx and i in accent_idx and accent_colors and i in accent_colors:
                 fg = accent_colors[i]
-            hud.texts.append(self._create_text_annot(line, (x_text, y0 + i*line_gap),
-                               size=line_size, bg=(0,0,0,0), fg=fg))
+            hud.texts.append(
+                self._create_text_annot(
+                    line,
+                    (x_text, y0 + i * line_gap),
+                    size=line_size,
+                    bg=(0, 0, 0, 0),
+                    fg=fg,
+                )
+            )
         img_annots.annotations.append(hud)
 
     def _bar_string(self, length_chars, char="█"):
         return char * max(0, int(length_chars))
 
-    def _push_quality_bar_modal(self, img_annots: dai.ImgAnnotations, values, rotation, display_text=""):
+    def _push_quality_bar_modal(
+        self, img_annots: dai.ImgAnnotations, values, rotation, display_text=""
+    ):
         """
         Big centered quality modal:
           - Title: 'Calibration Quality: {GOOD | COULD BE IMPROVED | NEEDS RECALIBRATION}'
@@ -206,9 +243,14 @@ class DynamicCalibrationControler(dai.node.HostNode):
         if rotation is None or len(rotation) == 0:
             self._push_center_panel(
                 img_annots,
-                ["Data is missing — please load more images with 'l'.",
-                 "Press any key to continue …"],
-                y_center=0.42, width=0.84, line_size=20, line_gap=0.04
+                [
+                    "Data is missing — please load more images with 'l'.",
+                    "Press any key to continue …",
+                ],
+                y_center=0.42,
+                width=0.84,
+                line_size=20,
+                line_gap=0.04,
             )
             return
 
@@ -230,30 +272,41 @@ class DynamicCalibrationControler(dai.node.HostNode):
         # Centered title (use a narrower panel so it looks centered)
         title = f"Calibration Quality: {status}"
         self._push_center_panel(
-            img_annots, [title],
-            y_center=0.42, width=0.60, line_size=24, line_gap=0.04,
-            accent_idx={0}, accent_colors={0: title_color}
+            img_annots,
+            [title],
+            y_center=0.42,
+            width=0.60,
+            line_size=24,
+            line_gap=0.04,
+            accent_idx={0},
+            accent_colors={0: title_color},
         )
 
         # Optional summary ABOVE the bar (never below)
         if values is not None and len(values) >= 4:
-            summary = (f"Depth error @1m:{values[0]:.2f}%, 2m:{values[1]:.2f}%, "
-                       f"5m:{values[2]:.2f}%, 10m:{values[3]:.2f}%")
+            summary = (
+                f"Depth error @1m:{values[0]:.2f}%, 2m:{values[1]:.2f}%, "
+                f"5m:{values[2]:.2f}%, 10m:{values[3]:.2f}%"
+            )
             self._push_center_panel(
-                img_annots, [summary],
-                y_center=0.62, width=0.90, line_size=18, line_gap=0.035
+                img_annots,
+                [summary],
+                y_center=0.62,
+                width=0.90,
+                line_size=18,
+                line_gap=0.035,
             )
 
         # Bar geometry (packed closer together)
-        x0, x1 = 0.20, 0.80    # tighter horizontal span
-        y_bar = 0.52           # bar vertical position
+        x0, x1 = 0.20, 0.80  # tighter horizontal span
+        y_bar = 0.52  # bar vertical position
         w = x1 - x0
         total_chars = 45
         seg_chars = total_chars // 3
 
         good = self._bar_string(seg_chars)
-        mid  = self._bar_string(seg_chars)
-        bad  = self._bar_string(total_chars - 2 * seg_chars)
+        mid = self._bar_string(seg_chars)
+        bad = self._bar_string(total_chars - 2 * seg_chars)
 
         # contiguous segments (minimal padding between thirds)
         seg_dx = w / 3.0
@@ -261,12 +314,14 @@ class DynamicCalibrationControler(dai.node.HostNode):
 
         def _slice(x, y, s, color):
             ann = dai.ImgAnnotation()
-            ann.texts.append(self._create_text_annot(s, (x, y), size=26, bg=(0, 0, 0, 0), fg=color))
+            ann.texts.append(
+                self._create_text_annot(s, (x, y), size=26, bg=(0, 0, 0, 0), fg=color)
+            )
             img_annots.annotations.append(ann)
 
-        _slice(lefts[0], y_bar, good, (0, 1, 0, 1))   # green
-        _slice(lefts[1], y_bar, mid,  (1, 1, 0, 1))   # yellow
-        _slice(lefts[2], y_bar, bad,  (1, 0, 0, 1))   # red
+        _slice(lefts[0], y_bar, good, (0, 1, 0, 1))  # green
+        _slice(lefts[1], y_bar, mid, (1, 1, 0, 1))  # yellow
+        _slice(lefts[2], y_bar, bad, (1, 0, 0, 1))  # red
 
         # Downward pointer '▼' placed ABOVE the bar (pointing down at it)
         if rot_max <= t1:
@@ -280,8 +335,11 @@ class DynamicCalibrationControler(dai.node.HostNode):
 
         x_ptr = x0 + frac * w
         arrow = dai.ImgAnnotation()
-        arrow.texts.append(self._create_text_annot("▼", (x_ptr, y_bar - 0.045),
-                                size=24, bg=(0, 0, 0, 0), fg=(1, 1, 1, 1)))
+        arrow.texts.append(
+            self._create_text_annot(
+                "▼", (x_ptr, y_bar - 0.045), size=24, bg=(0, 0, 0, 0), fg=(1, 1, 1, 1)
+            )
+        )
         img_annots.annotations.append(arrow)
 
         # NOTE: No labels or tail text are rendered under the bar.
@@ -293,10 +351,18 @@ class DynamicCalibrationControler(dai.node.HostNode):
         lines = []
         accents = {}
         if values is None or len(values) == 0 or angles is None or len(angles) < 3:
-            lines = ["Data is missing — please load more images with 'l'.",
-                     "Press any key to continue …"]
-            self._push_center_panel(img_annots, lines, y_center=0.42,
-                                    width=0.84, line_size=20, line_gap=0.04)
+            lines = [
+                "Data is missing — please load more images with 'l'.",
+                "Press any key to continue …",
+            ]
+            self._push_center_panel(
+                img_annots,
+                lines,
+                y_center=0.42,
+                width=0.84,
+                line_size=20,
+                line_gap=0.04,
+            )
             return
 
         threshold = 0.075
@@ -304,26 +370,37 @@ class DynamicCalibrationControler(dai.node.HostNode):
         over = np.where(abs_ang > threshold)[0].tolist()
         axis_names = ["Roll", "Pitch", "Yaw"]
         lines.append("Recalibration complete")
-        accents[0] = (0,1,0,1)  # green title
+        accents[0] = (0, 1, 0, 1)  # green title
 
         if over:
             axes = ", ".join(axis_names[i] for i in over)
             lines.append(f"Significant change in rotation! {axes}")
-            accents[1] = (1,0,0,1)  # red warning
+            accents[1] = (1, 0, 0, 1)  # red warning
             lines.append("To permanently flash new calibration, press 's'!")
         else:
             lines.append("No significant change detected")
 
-        lines.append(f"Euler angles (deg): Roll={angles[0]:.2f}, "
-                     f"Pitch={angles[1]:.2f}, Yaw={angles[2]:.2f}")
+        lines.append(
+            f"Euler angles (deg): Roll={angles[0]:.2f}, "
+            f"Pitch={angles[1]:.2f}, Yaw={angles[2]:.2f}"
+        )
         if values is not None and len(values) >= 4:
-            lines.append(f"Depth error @1m:{values[0]:.2f}%, 2m:{values[1]:.2f}%, "
-                         f"5m:{values[2]:.2f}%, 10m:{values[3]:.2f}%")
+            lines.append(
+                f"Depth error @1m:{values[0]:.2f}%, 2m:{values[1]:.2f}%, "
+                f"5m:{values[2]:.2f}%, 10m:{values[3]:.2f}%"
+            )
         lines.append("Press any key to continue …")
 
-        self._push_center_panel(img_annots, lines, y_center=0.55,
-                                width=0.80, line_size=20, line_gap=0.04,
-                                accent_idx=set(accents.keys()), accent_colors=accents)
+        self._push_center_panel(
+            img_annots,
+            lines,
+            y_center=0.55,
+            width=0.80,
+            line_size=20,
+            line_gap=0.04,
+            accent_idx=set(accents.keys()),
+            accent_colors=accents,
+        )
 
     # --- help panel ---
     def _push_help_panel(self, img_annots: dai.ImgAnnotations, frame: dai.ImgFrame):
@@ -351,36 +428,62 @@ class DynamicCalibrationControler(dai.node.HostNode):
 
         # Layout (smaller font, tighter spacing)
         size = 18
-        x = 0.04     # left
-        y0 = 0.075   # top
-        dy = 0.025   # line spacing (tight)
+        x = 0.04  # left
+        y0 = 0.075  # top
+        dy = 0.025  # line spacing (tight)
 
         hud = dai.ImgAnnotation()
         # Title slightly larger
-        hud.texts.append(self._create_text_annot(lines[0], (x, y0), size=16, bg=(0,0,0,0), fg=(1,1,1,1)))
+        hud.texts.append(
+            self._create_text_annot(
+                lines[0], (x, y0), size=16, bg=(0, 0, 0, 0), fg=(1, 1, 1, 1)
+            )
+        )
         y = y0 + dy * 1.2
         for line in lines[1:]:
-            hud.texts.append(self._create_text_annot(line, (x, y), size=size, bg=(0,0,0,0), fg=(1,1,1,1)))
+            hud.texts.append(
+                self._create_text_annot(
+                    line, (x, y), size=size, bg=(0, 0, 0, 0), fg=(1, 1, 1, 1)
+                )
+            )
             y += dy
 
         img_annots.annotations.append(hud)
         img_annots.setTimestamp(frame.getTimestamp())
 
-    def _push_center_banner(self, img_annots: dai.ImgAnnotations, text: str,
-                            x0=0.25, x1=0.75, y_center=0.50, band_h=0.14, size=20):
+    def _push_center_banner(
+        self,
+        img_annots: dai.ImgAnnotations,
+        text: str,
+        x0=0.25,
+        x1=0.75,
+        y_center=0.50,
+        band_h=0.14,
+        size=20,
+    ):
         # Background slab built from spacer rows
         slab = dai.ImgAnnotation()
         rows = 12
         for i in range(rows):
-            y = y_center - band_h/2 + i * (band_h / (rows - 1))
-            slab.texts.append(self._create_text_annot(" ", (x0, y), size=size,
-                                bg=(0,0,0,0.55), fg=(0,0,0,0)))
+            y = y_center - band_h / 2 + i * (band_h / (rows - 1))
+            slab.texts.append(
+                self._create_text_annot(
+                    " ", (x0, y), size=size, bg=(0, 0, 0, 0.55), fg=(0, 0, 0, 0)
+                )
+            )
         img_annots.annotations.append(slab)
 
         # Foreground text (center-left aligned with a small left margin)
         txt = dai.ImgAnnotation()
-        txt.texts.append(self._create_text_annot(text, (x0 + 0.02, y_center - 0.01),
-                             size=size, bg=(0,0,0,0), fg=(1,1,1,1)))
+        txt.texts.append(
+            self._create_text_annot(
+                text,
+                (x0 + 0.02, y_center - 0.01),
+                size=size,
+                bg=(0, 0, 0, 0),
+                fg=(1, 1, 1, 1),
+            )
+        )
         img_annots.annotations.append(txt)
 
     # --- existing HUD, but styled to match (no green) ---
@@ -389,19 +492,36 @@ class DynamicCalibrationControler(dai.node.HostNode):
         y, dy, x = 0.05, 0.04, 0.05
 
         if self.old_calibration:
-            hud.texts.append(self._create_text_annot("PREVIOUS calibration: available", (x, y))); y += dy
+            hud.texts.append(
+                self._create_text_annot("PREVIOUS calibration: available", (x, y))
+            )
+            y += dy
 
         if self.last_quality and getattr(self.last_quality, "qualityData", None):
             q = self.last_quality.qualityData
-            rotmag = float(np.sqrt(q.rotationChange[0]**2 + q.rotationChange[1]**2 + q.rotationChange[2]**2))
-            hud.texts.append(self._create_text_annot(f"Δrot = {rotmag:.3f}°", (0.55, 0.05)))
-            hud.texts.append(self._create_text_annot(
-                f"Sampson mean: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
-                (0.55, 0.09)
-            ))
+            rotmag = float(
+                np.sqrt(
+                    q.rotationChange[0] ** 2
+                    + q.rotationChange[1] ** 2
+                    + q.rotationChange[2] ** 2
+                )
+            )
+            hud.texts.append(
+                self._create_text_annot(f"Δrot = {rotmag:.3f}°", (0.55, 0.05))
+            )
+            hud.texts.append(
+                self._create_text_annot(
+                    f"Sampson mean: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
+                    (0.55, 0.09),
+                )
+            )
 
         # Small hint to show help
-        hud.texts.append(self._create_text_annot("[h] Help", (0.05, 0.92), size=14, bg=(0,0,0,0.35)))
+        hud.texts.append(
+            self._create_text_annot(
+                "[h] Help", (0.05, 0.92), size=14, bg=(0, 0, 0, 0.35)
+            )
+        )
         img_annots.annotations.append(hud)
         img_annots.setTimestamp(frame.getTimestamp())
 
@@ -415,15 +535,19 @@ class DynamicCalibrationControler(dai.node.HostNode):
         now = time.time()
 
         # If 'l' timer elapsed, stop timed collecting
-        if self._collecting and self._collecting_until > 0.0 and now >= self._collecting_until:
+        if (
+            self._collecting
+            and self._collecting_until > 0.0
+            and now >= self._collecting_until
+        ):
             self._collecting = False
             self._collecting_until = 0.0
 
         # Coverage bar: show while collecting (respecting timer) or when partial progress exists
         show_cov = (
-            (self._collecting and (self._collecting_until == 0.0 or now < self._collecting_until))
-            or (self._coverage_vec is not None and 0.0 < self._coverage_pct < 100.0)
-        )
+            self._collecting
+            and (self._collecting_until == 0.0 or now < self._collecting_until)
+        ) or (self._coverage_vec is not None and 0.0 < self._coverage_pct < 100.0)
 
         # Flash banner (2s) if any
         if self._status_text:
@@ -442,9 +566,15 @@ class DynamicCalibrationControler(dai.node.HostNode):
             txt = f"Collecting frames  {self._coverage_pct:5.1f}%  {bar}"
 
             banner = dai.ImgAnnotation()
-            banner.texts.append(self._create_text_annot(
-                txt, (x0 + 0.02, y_center - 0.02), size=22, bg=(0, 0, 0, 0), fg=(1, 1, 1, 1)
-            ))
+            banner.texts.append(
+                self._create_text_annot(
+                    txt,
+                    (x0 + 0.02, y_center - 0.02),
+                    size=22,
+                    bg=(0, 0, 0, 0),
+                    fg=(1, 1, 1, 1),
+                )
+            )
             img_annots.annotations.append(banner)
 
         # When no banner, no coverage bar, and no modal → draw the depth HUD
@@ -464,30 +594,67 @@ class DynamicCalibrationControler(dai.node.HostNode):
             if self.last_quality and getattr(self.last_quality, "qualityData", None):
                 qhud = dai.ImgAnnotation()
                 q = self.last_quality.qualityData
-                rotmag = float(np.sqrt(q.rotationChange[0]**2 + q.rotationChange[1]**2 + q.rotationChange[2]**2))
-                qhud.texts.append(self._create_text_annot(f"Δrot = {rotmag:.3f}°", (0.62, 0.06), size=16, bg=(0,0,0,0.35)))
-                qhud.texts.append(self._create_text_annot(
-                    f"Sampson mean: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
-                    (0.62, 0.10), size=16, bg=(0,0,0,0.35)
-                ))
+                rotmag = float(
+                    np.sqrt(
+                        q.rotationChange[0] ** 2
+                        + q.rotationChange[1] ** 2
+                        + q.rotationChange[2] ** 2
+                    )
+                )
+                qhud.texts.append(
+                    self._create_text_annot(
+                        f"Δrot = {rotmag:.3f}°",
+                        (0.62, 0.06),
+                        size=16,
+                        bg=(0, 0, 0, 0.35),
+                    )
+                )
+                qhud.texts.append(
+                    self._create_text_annot(
+                        f"Sampson mean: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
+                        (0.62, 0.10),
+                        size=16,
+                        bg=(0, 0, 0, 0.35),
+                    )
+                )
                 img_annots.annotations.append(qhud)
 
             elif self._last_calib_diff is not None:
                 q = self._last_calib_diff
-                rotmag = float(np.sqrt(q.rotationChange[0]**2 + q.rotationChange[1]**2 + q.rotationChange[2]**2))
+                rotmag = float(
+                    np.sqrt(
+                        q.rotationChange[0] ** 2
+                        + q.rotationChange[1] ** 2
+                        + q.rotationChange[2] ** 2
+                    )
+                )
                 hud_metrics = dai.ImgAnnotation()
-                hud_metrics.texts.append(self._create_text_annot(f"Δrot(new vs current) = {rotmag:.3f}°",
-                                        (0.62, 0.06), size=16, bg=(0,0,0,0.35)))
-                hud_metrics.texts.append(self._create_text_annot(
-                    f"Sampson: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
-                    (0.62, 0.10), size=16, bg=(0,0,0,0.35)
-                ))
+                hud_metrics.texts.append(
+                    self._create_text_annot(
+                        f"Δrot(new vs current) = {rotmag:.3f}°",
+                        (0.62, 0.06),
+                        size=16,
+                        bg=(0, 0, 0, 0.35),
+                    )
+                )
+                hud_metrics.texts.append(
+                    self._create_text_annot(
+                        f"Sampson: new={q.sampsonErrorNew:.3f}px  current={q.sampsonErrorCurrent:.3f}px",
+                        (0.62, 0.10),
+                        size=16,
+                        bg=(0, 0, 0, 0.35),
+                    )
+                )
                 d = getattr(q, "depthErrorDifference", None)
                 if d and len(d) >= 4:
-                    hud_metrics.texts.append(self._create_text_annot(
-                        f"Depth Δ @1/2/5/10m: {d[0]:.2f}% / {d[1]:.2f}% / {d[2]:.2f}% / {d[3]:.2f}%",
-                        (0.62, 0.14), size=16, bg=(0,0,0,0.35)
-                    ))
+                    hud_metrics.texts.append(
+                        self._create_text_annot(
+                            f"Depth Δ @1/2/5/10m: {d[0]:.2f}% / {d[1]:.2f}% / {d[2]:.2f}% / {d[3]:.2f}%",
+                            (0.62, 0.14),
+                            size=16,
+                            bg=(0, 0, 0, 0.35),
+                        )
+                    )
                 img_annots.annotations.append(hud_metrics)
 
         # Modals (centered, large) — drawn last so they’re on top
@@ -551,7 +718,9 @@ class DynamicCalibrationControler(dai.node.HostNode):
                     }
                     self._modal_expire_ts = time.time() + 3.5
                 else:
-                    self._status_text = "Data is missing — please load more images with 'l'."
+                    self._status_text = (
+                        "Data is missing — please load more images with 'l'."
+                    )
                     self._status_expire_ts = time.time() + 2.5
 
         # 2) drain calibrationOutput queue
@@ -579,8 +748,15 @@ class DynamicCalibrationControler(dai.node.HostNode):
                 # auto-apply if enabled
                 if self.auto_apply_new and self.new_calibration is not None:
                     try:
-                        self._send_cmd(dai.DynamicCalibrationControl.Commands.ApplyCalibration(self.new_calibration))
-                        self.old_calibration, self.calibration = self.calibration, self.new_calibration
+                        self._send_cmd(
+                            dai.DynamicCalibrationControl.Commands.ApplyCalibration(
+                                self.new_calibration
+                            )
+                        )
+                        self.old_calibration, self.calibration = (
+                            self.calibration,
+                            self.new_calibration,
+                        )
                         self.new_calibration = None
                     except Exception as e:
                         print(f"Failed to apply new calibration: {e}")
@@ -590,14 +766,24 @@ class DynamicCalibrationControler(dai.node.HostNode):
                 # pretty print the difference metrics (if available)
                 q = self._last_calib_diff
                 if q is not None:
-                    rotmag = float(np.sqrt(q.rotationChange[0]**2 + q.rotationChange[1]**2 + q.rotationChange[2]**2))
-                    print(f"Rotation difference: || r_current - r_new || = {rotmag} deg")
+                    rotmag = float(
+                        np.sqrt(
+                            q.rotationChange[0] ** 2
+                            + q.rotationChange[1] ** 2
+                            + q.rotationChange[2] ** 2
+                        )
+                    )
+                    print(
+                        f"Rotation difference: || r_current - r_new || = {rotmag} deg"
+                    )
                     print(f"Mean Sampson error achievable = {q.sampsonErrorNew} px ")
                     print(f"Mean Sampson error current    = {q.sampsonErrorCurrent} px")
                     d = getattr(q, "depthErrorDifference", None)
                     if d and len(d) >= 4:
-                        print("Theoretical Depth Error Difference "
-                              f"@1m:{d[0]:.2f}%, 2m:{d[1]:.2f}%, 5m:{d[2]:.2f}%, 10m:{d[3]:.2f}%")
+                        print(
+                            "Theoretical Depth Error Difference "
+                            f"@1m:{d[0]:.2f}%, 2m:{d[1]:.2f}%, 5m:{d[2]:.2f}%, 10m:{d[3]:.2f}%"
+                        )
 
                     # Show recalibration modal with values + Euler angles
                     self._modal_kind = "recalib"
@@ -623,7 +809,9 @@ class DynamicCalibrationControler(dai.node.HostNode):
                             self._coverage_vec = arr
                             # auto-detect units
                             mx = float(np.nanmax(arr))
-                            pct_from_cells = float(np.nanmean(arr) * (100.0 if mx <= 1.01 else 1.0))
+                            pct_from_cells = float(
+                                np.nanmean(arr) * (100.0 if mx <= 1.01 else 1.0)
+                            )
                             self._coverage_pct = pct_from_cells
                     except Exception:
                         pass
@@ -662,11 +850,11 @@ class DynamicCalibrationControler(dai.node.HostNode):
             self._modal_payload = {}
 
         # commands
-        if key == ord('q'):
+        if key == ord("q"):
             self.wants_quit = True
             return
 
-        if key == ord('r'):
+        if key == ord("r"):
             self._collecting_until = 0.0
             self._collecting = True
             self._coverage_vec = None
@@ -677,7 +865,7 @@ class DynamicCalibrationControler(dai.node.HostNode):
             self._send_cmd(dai.DynamicCalibrationControl.Commands.StartCalibration())
             return
 
-        if key == ord('R'):
+        if key == ord("R"):
             self._collecting = False
             self._coverage_vec = None
             self._coverage_pct = 0.0
@@ -687,7 +875,7 @@ class DynamicCalibrationControler(dai.node.HostNode):
             self._send_cmd(dai.DynamicCalibrationControl.Commands.Calibrate(force=True))
             return
 
-        if key == ord('l'):
+        if key == ord("l"):
             self._collecting_until = time.time() + 2.0  # show bar only for 2s
             self._collecting = False
             self._coverage_vec = None
@@ -699,20 +887,35 @@ class DynamicCalibrationControler(dai.node.HostNode):
             self._send_cmd(dai.DynamicCalibrationControl.Commands.LoadImage())
             return
 
-        if key == ord('n') and self.new_calibration:
-            self._send_cmd(dai.DynamicCalibrationControl.Commands.ApplyCalibration(self.new_calibration))
-            self.old_calibration, self.calibration = self.calibration, self.new_calibration
+        if key == ord("n") and self.new_calibration:
+            self._send_cmd(
+                dai.DynamicCalibrationControl.Commands.ApplyCalibration(
+                    self.new_calibration
+                )
+            )
+            self.old_calibration, self.calibration = (
+                self.calibration,
+                self.new_calibration,
+            )
             self.new_calibration = None
             self._flash_status("Applying NEW calibration…", 2.0)
             return
 
-        if key == ord('o') and self.old_calibration:
-            self._send_cmd(dai.DynamicCalibrationControl.Commands.ApplyCalibration(self.old_calibration))
-            self.new_calibration, self.calibration, self.old_calibration = self.calibration, self.old_calibration, None
+        if key == ord("o") and self.old_calibration:
+            self._send_cmd(
+                dai.DynamicCalibrationControl.Commands.ApplyCalibration(
+                    self.old_calibration
+                )
+            )
+            self.new_calibration, self.calibration, self.old_calibration = (
+                self.calibration,
+                self.old_calibration,
+                None,
+            )
             self._flash_status("Reverting to PREVIOUS calibration…", 2.0)
             return
 
-        if key == ord('c'):
+        if key == ord("c"):
             self._collecting = False
             self._coverage_vec = None
             self._coverage_pct = 0.0
@@ -722,45 +925,51 @@ class DynamicCalibrationControler(dai.node.HostNode):
             self._send_cmd(dai.DynamicCalibrationControl.Commands.CalibrationQuality())
             return
 
-        if key == ord('C'):
+        if key == ord("C"):
             self._collecting = False
             self._coverage_vec = None
             self._coverage_pct = 0.0
             self._data_acquired = 0.0
             self._last_calib_diff = None
             self.last_quality = None
-            self._send_cmd(dai.DynamicCalibrationControl.Commands.CalibrationQuality(force=True))
+            self._send_cmd(
+                dai.DynamicCalibrationControl.Commands.CalibrationQuality(force=True)
+            )
             return
 
-        if key == ord('h'):
+        if key == ord("h"):
             self._show_help = not self._show_help
             return
 
         # depth HUD controls
-        if key in (ord('g'), ord('G')):
+        if key in (ord("g"), ord("G")):
             self._hud_on = not self._hud_on
             return
 
         if self._last_depth is not None:
             step = max(1, int(0.01 * self._last_depth.shape[1]))  # ~1% width per tap
-            cx, cy = self._cursor_xy if self._cursor_xy is not None else (self._last_depth.shape[1]//2, self._last_depth.shape[0]//2)
-            if key in (ord('a'), ord('A')):
+            cx, cy = (
+                self._cursor_xy
+                if self._cursor_xy is not None
+                else (self._last_depth.shape[1] // 2, self._last_depth.shape[0] // 2)
+            )
+            if key in (ord("a"), ord("A")):
                 cx -= step
-            if key in (ord('d'), ord('D')):
+            if key in (ord("d"), ord("D")):
                 cx += step
-            if key in (ord('w'), ord('W')):
+            if key in (ord("w"), ord("W")):
                 cy -= step
-            if key in (ord('s'), ord('S')):
+            if key in (ord("s"), ord("S")):
                 cy += step
-            if key in (ord('z'), ord('Z')):
+            if key in (ord("z"), ord("Z")):
                 self._roi_half = max(1, self._roi_half - 1)
-            if key in (ord('x'), ord('X')):
+            if key in (ord("x"), ord("X")):
                 self._roi_half += 1
             H, W = self._last_depth.shape[:2]
-            self._cursor_xy = (int(np.clip(cx, 0, W-1)), int(np.clip(cy, 0, H-1)))
+            self._cursor_xy = (int(np.clip(cx, 0, W - 1)), int(np.clip(cy, 0, H - 1)))
 
         # --- FLASH to EEPROM ---
-        if key == ord('p'):
+        if key == ord("p"):
             # Flash NEW (or current) calibration
             if self._device is None:
                 self._flash_status("No device bound — cannot flash.", 2.0)
@@ -776,7 +985,7 @@ class DynamicCalibrationControler(dai.node.HostNode):
                 self._flash_status(f"Flash failed: {e}", 2.5)
             return
 
-        if key == ord('k'):
+        if key == ord("k"):
             # Flash PREVIOUS calibration
             if self._device is None:
                 self._flash_status("No device bound — cannot flash.", 2.0)
@@ -791,7 +1000,7 @@ class DynamicCalibrationControler(dai.node.HostNode):
                 self._flash_status(f"Flash failed: {e}", 2.5)
             return
 
-        if key == ord('f'):
+        if key == ord("f"):
             # Flash FACTORY calibration
             if self._device is None:
                 self._flash_status("No device bound — cannot flash.", 2.0)

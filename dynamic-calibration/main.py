@@ -1,4 +1,3 @@
-import numpy as np
 import cv2
 
 from depthai_nodes.node import ApplyColormap
@@ -13,14 +12,17 @@ visualizer = dai.RemoteConnection(httpPort=8082)
 device = dai.Device(dai.DeviceInfo(args.device)) if args.device else dai.Device()
 # ---------- Pipeline definition ----------
 with dai.Pipeline(device) as pipeline:
-
     # Create camera nodes
-    cam_left  = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+    cam_left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
     cam_right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
 
     # Request full resolution NV12 outputs
-    left_out  = cam_left.requestFullResolutionOutput(dai.ImgFrame.Type.NV12, fps=args.fps_limit)
-    right_out = cam_right.requestFullResolutionOutput(dai.ImgFrame.Type.NV12, fps=args.fps_limit)
+    left_out = cam_left.requestFullResolutionOutput(
+        dai.ImgFrame.Type.NV12, fps=args.fps_limit
+    )
+    right_out = cam_right.requestFullResolutionOutput(
+        dai.ImgFrame.Type.NV12, fps=args.fps_limit
+    )
 
     # Stereo node
     stereo = pipeline.create(dai.node.StereoDepth)
@@ -38,24 +40,24 @@ with dai.Pipeline(device) as pipeline:
     depth_parser.setColormap(cv2.COLORMAP_JET)
 
     calibration = device.readCalibration()
-    new_calibration = None 
+    new_calibration = None
     old_calibration = None
 
     # --- existing ---
     calibration_output = dyn_calib.calibrationOutput.createOutputQueue()
-    coverage_output    = dyn_calib.coverageOutput.createOutputQueue()
-    quality_output     = dyn_calib.qualityOutput.createOutputQueue()
-    input_control      = dyn_calib.inputControl.createInputQueue()
+    coverage_output = dyn_calib.coverageOutput.createOutputQueue()
+    quality_output = dyn_calib.qualityOutput.createOutputQueue()
+    input_control = dyn_calib.inputControl.createInputQueue()
     device.setCalibration(calibration)
 
     # ---------- Visualizer setup ----------
-    visualizer.addTopic("Left",  stereo.syncedLeft,  "images")
+    visualizer.addTopic("Left", stereo.syncedLeft, "images")
     visualizer.addTopic("Right", stereo.syncedRight, "images")
-    visualizer.addTopic("Depth", depth_parser.out,   "images")
+    visualizer.addTopic("Depth", depth_parser.out, "images")
 
     dyn_ctrl = pipeline.create(DynamicCalibrationControler).build(
-        preview=depth_parser.out,   # for timestamped overlays
-        depth=stereo.depth          # raw uint16 depth in mm
+        preview=depth_parser.out,  # for timestamped overlays
+        depth=stereo.depth,  # raw uint16 depth in mm
     )
     visualizer.addTopic("DynCalib HUD", dyn_ctrl.out_annotations, "images")
 
