@@ -25,7 +25,7 @@ Here is a list of all available parameters:
 -n MODEL_NAME, --model-name MODEL_NAME
 					Name of the model to use: yolo-world, yoloe, or yoloe-image (default: yolo-world)
 --precision PRECISION
-					Model precision for YOLOE models: int8 (default) or fp16. fp16 disables input quantization.
+					Model precision for YOLOE models: int8 (faster) or fp16 (more accurate) (default: int8)
 ```
 
 ### Model Options
@@ -33,7 +33,7 @@ Here is a list of all available parameters:
 This example supports three different YOLO models:
 
 - **YOLO-World** (default): Open-vocabulary detection with text prompts and optional image prompting (CLIP visual encoder).
-- **YOLOE**: Fast detection with enhanced visualization, including instance segmentation.
+- **YOLOE**: Fast detection with enhanced visualization, including instance segmentation. Only text prompts are supported.
 - **YOLOE-Image**: Visual-prompt-only variant of YOLOE. Uses a visual prompt encoder to extract embeddings from an image mask and applies them as class features. If no mask is provided, a default central mask is used. Visual encoder reference: [YOLOE visual encoder ONNX](https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/blob/main/yoloe-v8l-seg_visual_encoder.onnx).
 
 Notes:
