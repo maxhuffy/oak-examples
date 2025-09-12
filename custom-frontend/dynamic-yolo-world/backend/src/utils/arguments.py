@@ -59,7 +59,7 @@ def initialize_argparser():
     )
     parser.add_argument(
         "--precision",
-        help="Model precision for YOLOE models: int8 (default) or fp16. fp16 disables input quantization.",
+        help="Model precision for YOLOE models: int8 (faster) or fp16 (more accurate).",
         required=False,
         default="int8",
         type=str,

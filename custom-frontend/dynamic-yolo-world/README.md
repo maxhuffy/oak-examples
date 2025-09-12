@@ -25,7 +25,7 @@ Here is a list of all available parameters:
 -n MODEL_NAME, --model-name MODEL_NAME
 					Name of the model to use: yolo-world, yoloe, or yoloe-image (default: yolo-world)
 --precision PRECISION
-					Model precision for YOLOE models: int8 (default) or fp16. fp16 disables input quantization.
+					Model precision for YOLOE models: int8 (faster) or fp16 (more accurate) (default: int8)
 ```
 
 ### Model Options
@@ -33,7 +33,7 @@ Here is a list of all available parameters:
 This example supports three different YOLO models:
 
 - **YOLO-World** (default): Open-vocabulary detection with text prompts and optional image prompting (CLIP visual encoder).
-- **YOLOE**: Fast detection with enhanced visualization, including instance segmentation.
+- **YOLOE**: Fast detection with enhanced visualization, including instance segmentation. Only text prompts are supported.
 - **YOLOE-Image**: Visual-prompt-only variant of YOLOE. Uses a visual prompt encoder to extract embeddings from an image mask and applies them as class features. If no mask is provided, a default central mask is used. Visual encoder reference: [YOLOE visual encoder ONNX](https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/blob/main/yoloe-v8l-seg_visual_encoder.onnx).
 
 Notes:
@@ -45,8 +45,8 @@ Notes:
 Before running the example you’ll need to first build the frontend. Follow these steps:
 
 1. Install FE dependencies: `cd frontend/ && npm i`
-1. Build the FE: `npm run build`
-1. Move back to origin directory: `cd ..`
+2. Build the FE: `npm run build`
+3. Move back to origin directory: `cd ..`
 
 ## Standalone Mode (RVC4 only)
 
@@ -67,4 +67,4 @@ This will run the example with default argument values (YOLO-World model). If yo
 ### Remote access
 
 1. You can upload oakapp to Luxonis Hub via oakctl
-1. And then you can just remotly open App UI via App detail
+2. And then you can just remotely open App UI via App detail
