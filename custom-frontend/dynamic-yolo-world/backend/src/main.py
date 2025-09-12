@@ -99,7 +99,9 @@ with dai.Pipeline(device) as pipeline:
         )
         # Request high-res NV12 frames for visualization/encoding
         video_src_out = cam.requestOutput(
-            size=VISUALIZATION_RESOLUTION, type=dai.ImgFrame.Type.NV12, fps=args.fps_limit
+            size=VISUALIZATION_RESOLUTION,
+            type=dai.ImgFrame.Type.NV12,
+            fps=args.fps_limit,
         )
 
     image_manip = pipeline.create(dai.node.ImageManip)
@@ -148,7 +150,9 @@ with dai.Pipeline(device) as pipeline:
             apply_colormap_node.out,
         )
         overlay_to_nv12 = pipeline.create(dai.node.ImageManip)
-        overlay_to_nv12.setMaxOutputFrameSize(VISUALIZATION_RESOLUTION[0] * VISUALIZATION_RESOLUTION[1] * 3)
+        overlay_to_nv12.setMaxOutputFrameSize(
+            VISUALIZATION_RESOLUTION[0] * VISUALIZATION_RESOLUTION[1] * 3
+        )
         overlay_to_nv12.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
         overlay_frames_node.out.link(overlay_to_nv12.inputImage)
 
@@ -191,8 +195,7 @@ with dai.Pipeline(device) as pipeline:
             text_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model in ("yoloe", "yoloe-image")
-                and args.precision == "fp16"
+                if args.model in ("yoloe", "yoloe-image") and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
         )
@@ -222,8 +225,7 @@ with dai.Pipeline(device) as pipeline:
             image_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model in ("yoloe", "yoloe-image")
-                and args.precision == "fp16"
+                if args.model in ("yoloe", "yoloe-image") and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
         )

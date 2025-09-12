@@ -62,7 +62,11 @@ oakctl app run .
 
 Once the app is built and running you can access the DepthAI Viewer locally by opening `https://<OAK4_IP>:9000/` in your browser (the exact URL will be shown in the terminal output).
 
-This will run the example with default argument values (YOLO-World model). If you want to change these values you need to edit the `oakapp.toml` file (refer [here](https://docs.luxonis.com/software-v3/oak-apps/configuration/) for more information about this configuration file).
+This will run the example with default argument values (YOLO-World model). If you want to change these values you need to edit the `backend-run.sh` file to pass the arguments to the backend. Example:
+
+```bash
+python3.12 /app/backend/src/main.py --model yoloe --precision fp16 --fps-limit 10 --device <DEVICE_ID>
+```
 
 ### Remote access
 
