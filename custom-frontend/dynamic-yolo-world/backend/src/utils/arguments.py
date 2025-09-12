@@ -49,8 +49,8 @@ def initialize_argparser():
         type=int,
     )
     parser.add_argument(
-        "-n",
-        "--model_name",
+        "-m",
+        "--model",
         help="Name of the model to use: yolo-world, yoloe or yoloe-image",
         required=False,
         default="yolo-world",

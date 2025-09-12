@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 
 import depthai as dai
 from depthai_nodes.node import (
@@ -35,14 +36,12 @@ if platform != "RVC4":
 
 frame_type = dai.ImgFrame.Type.BGR888i
 # choose initial features: text for yolo-world/yoloe, visual for yoloe-image
-if args.model_name == "yoloe-image":
-    import numpy as np
-
+if args.model == "yoloe-image":
     placeholder = np.zeros((224, 224, 3), dtype=np.uint8)
     text_features = extract_image_prompt_embeddings(
         placeholder,
         max_num_classes=MAX_NUM_CLASSES,
-        model_name=args.model_name,
+        model_name=args.model,
         precision=args.precision,
     )
     CLASS_NAMES = ["image_prompt"]
@@ -50,7 +49,7 @@ else:
     text_features = extract_text_embeddings(
         class_names=CLASS_NAMES,
         max_num_classes=MAX_NUM_CLASSES,
-        model_name=args.model_name,
+        model_name=args.model,
         precision=args.precision,
     )
 
@@ -64,16 +63,16 @@ with dai.Pipeline(device) as pipeline:
     print("Creating pipeline...")
 
     # Model selection with precision-aware YAMLs for YOLOE variants
-    if args.model_name == "yolo-world":
+    if args.model == "yolo-world":
         model_description = dai.NNModelDescription.fromYamlFile(
             f"yolo_world_l.{platform}.yaml"
         )
-    elif args.model_name == "yoloe":
+    elif args.model == "yoloe":
         yaml_base = "yoloe_v8_l_fp16" if args.precision == "fp16" else "yoloe_v8_l"
         model_description = dai.NNModelDescription.fromYamlFile(
             f"{yaml_base}.{platform}.yaml"
         )
-    elif args.model_name == "yoloe-image":
+    elif args.model == "yoloe-image":
         yaml_base = (
             "yoloe_v8_l_image_fp16" if args.precision == "fp16" else "yoloe_v8_l_image"
         )
@@ -140,9 +139,9 @@ with dai.Pipeline(device) as pipeline:
         label_encoding={k: v for k, v in enumerate(CLASS_NAMES)},
     )
 
-    if args.model_name == "yolo-world":
+    if args.model == "yolo-world":
         visualizer.addTopic("Video", video_enc.out, "images")
-    elif args.model_name in ("yoloe", "yoloe-image"):
+    elif args.model in ("yoloe", "yoloe-image"):
         apply_colormap_node = pipeline.create(ApplyColormap).build(nn_with_parser.out)
         overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
             video_src_out,
@@ -165,7 +164,7 @@ with dai.Pipeline(device) as pipeline:
 
     def class_update_service(new_classes: list[str]):
         """Changes classes to detect based on the user input"""
-        if args.model_name == "yoloe-image":
+        if args.model == "yoloe-image":
             print(
                 "Class update is disabled in yoloe-image mode. Upload a new image prompt instead."
             )
@@ -183,7 +182,7 @@ with dai.Pipeline(device) as pipeline:
         text_features = extract_text_embeddings(
             class_names=CLASS_NAMES,
             max_num_classes=MAX_NUM_CLASSES,
-            model_name=args.model_name,
+            model_name=args.model,
             precision=args.precision,
         )
         inputNNData = dai.NNData()
@@ -192,7 +191,7 @@ with dai.Pipeline(device) as pipeline:
             text_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model_name in ("yoloe", "yoloe-image")
+                if args.model in ("yoloe", "yoloe-image")
                 and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
@@ -214,7 +213,7 @@ with dai.Pipeline(device) as pipeline:
     def image_upload_service(image_data):
         image = base64_to_cv2_image(image_data["data"])
         image_features = extract_image_prompt_embeddings(
-            image, model_name=args.model_name, precision=args.precision
+            image, model_name=args.model, precision=args.precision
         )
         print("Image features extracted, sending to model...")
         inputNNData = dai.NNData()
@@ -223,7 +222,7 @@ with dai.Pipeline(device) as pipeline:
             image_features,
             dataType=(
                 dai.TensorInfo.DataType.FP16
-                if args.model_name in ("yoloe", "yoloe-image")
+                if args.model in ("yoloe", "yoloe-image")
                 and args.precision == "fp16"
                 else dai.TensorInfo.DataType.U8F
             ),
@@ -243,9 +242,9 @@ with dai.Pipeline(device) as pipeline:
     visualizer.registerService(
         "Threshold Update Service", conf_threshold_update_service
     )
-    if args.model_name == "yolo-world":
+    if args.model == "yolo-world":
         visualizer.registerService("Image Upload Service", image_upload_service)
-    elif args.model_name == "yoloe-image":
+    elif args.model == "yoloe-image":
         visualizer.registerService("Image Upload Service", image_upload_service)
 
     print("Pipeline created.")
@@ -259,7 +258,7 @@ with dai.Pipeline(device) as pipeline:
         text_features,
         dataType=(
             dai.TensorInfo.DataType.FP16
-            if args.model_name in ("yoloe", "yoloe-image") and args.precision == "fp16"
+            if args.model in ("yoloe", "yoloe-image") and args.precision == "fp16"
             else dai.TensorInfo.DataType.U8F
         ),
     )
