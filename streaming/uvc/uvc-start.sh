@@ -186,21 +186,19 @@ do_uvc_configure() {
 case "$1" in
     start)
     while [ $retries -lt $max_retries ]; do
-        do_uvc_configure
-        echo "    ==== Starting UVC APP ===="
         /app/uvc_example &
         child_pid=$!
         wait "$child_pid"
         status=$?
 
-      if [ $status -eq 0 ]; then
+        if [ $status -eq 0 ]; then
         log "    uvc_example exited normally."
         exit 0
-      fi
+        fi
 
-      retries=$((retries + 1))
-      log "    uvc_example exited with status $status. Restarting ($retries/$max_retries) in ${backoff}s..."
-      sleep "$backoff"
+        retries=$((retries + 1))
+        log "    uvc_example exited with status $status. Restarting ($retries/$max_retries) in ${backoff}s..."
+        sleep "$backoff"
     done
 
     log "    uvc_example failed $max_retries times. Not restarting anymore."
