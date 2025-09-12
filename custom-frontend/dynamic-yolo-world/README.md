@@ -22,7 +22,7 @@ Here is a list of all available parameters:
 					FPS limit. (default: None)
 -ip IP, --ip IP       IP address to serve the frontend on. (default: None)
 -p PORT, --port PORT  Port to serve the frontend on. (default: None)
--n MODEL_NAME, --model-name MODEL_NAME
+-m MODEL, --model MODEL
 					Name of the model to use: yolo-world, yoloe, or yoloe-image (default: yolo-world)
 --precision PRECISION
 					Model precision for YOLOE models: int8 (faster) or fp16 (more accurate) (default: int8)
