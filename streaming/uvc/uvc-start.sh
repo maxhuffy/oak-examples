@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Log function for unified messages
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [UVC] $1"
+}
+
 CONFIGFS="/sys/kernel/config"
 GADGET="$CONFIGFS/usb_gadget"
 VID="0x05c6"
@@ -8,7 +13,7 @@ PID="0x90cb"
 # find serialno from cmdline
 SERIAL=$(grep -o "androidboot.serialno=[A-Za-z0-9]*" /proc/cmdline | cut -d "=" -f2)
 if [ -z "$SERIAL" ]; then
-    echo "SERIAL not found with cmdline, use default"
+    log "Serial number not found in cmdline, using default"
     SERIAL="12345678"
 fi
 
@@ -16,41 +21,29 @@ MANUF="Luxonis"
 PRODUCT="Luxonis UVC Camera"
 UDC=$(ls /sys/class/udc) # will identify the 'first' UDC
 
-echo "Detecting platform:"
-echo "  product : $PRODUCT"
-echo "  udc     : $UDC"
-echo "  serial  : $SERIAL"
+log "=== Detecting platform:"
+log "    product : $PRODUCT"
+log "    udc     : $UDC"
+log "    serial  : $SERIAL"
 
-remove_all_gadgets() {
-    echo Removing all gadget configs
-
-    if [ ! -d /sys/kernel/config/usb_gadget/g1 ]; then
-        echo "No gadget found, nothing to remove"
+remove_uvc_gadget() {
+    if [ ! -d /sys/kernel/config/usb_gadget/g1/functions/uvc.0 ]; then
+        log "    No uvc gadget found, nothing to remove"
         return 0
     fi
 
     pushd /sys/kernel/config/usb_gadget/g1 >/dev/null
 
-    echo "Unbinding USB Device Controller..."
-    retries=0
-    max_retries=5
-    while true; do
-        echo "" > UDC 2>/dev/null
-        if [ $? -eq 0 ]; then
-            echo "Successfully unbound UDC"
-            break
-        fi
-        retries=$((retries + 1))
-        if [ $retries -ge $max_retries ]; then
-            echo "Failed to unbind UDC after $max_retries attempts"
-            break
-        fi
-        sleep 1
-    done
+    log "    Disabling ADBD service and unbinding USB Device Controller..."
+    systemctl stop adbd 2>/dev/null
+    echo "" > UDC 2>/dev/null
+    # Check if UDC is empty
+    if [ ! -z "$(cat UDC 2>/dev/null)" ]; then
+        log "    UDC is not empty, exiting!"
+        exit 1
+    fi
 
-    rm configs/c.1/* 2>/dev/null
-    rmdir configs/c.1/strings/0x409 2>/dev/null
-    rmdir configs/c.1 2>/dev/null
+    rm configs/c.1/uvc.0 2>/dev/null
 
     rm functions/uvc.0/streaming/header/h/* 2>/dev/null
     rm functions/uvc.0/streaming/header/h1/* 2>/dev/null
@@ -77,20 +70,18 @@ remove_all_gadgets() {
     rm functions/uvc.0/control/class/ss/* 2>/dev/null
     rmdir functions/uvc.0/control/header/* 2>/dev/null
 
-    rmdir functions/* 2>/dev/null
-
-    rmdir strings/0x409
+    rmdir functions/uvc.0 2>/dev/null
 
     popd >/dev/null
 
-    rmdir /sys/kernel/config/usb_gadget/g1
-
-    if [ ! -e /sys/kernel/config/usb_gadget/g1 ]; then
-        echo "Gadget successfully removed!"
+    if [ ! -d /sys/kernel/config/usb_gadget/g1/functions/uvc.0 ]; then
+        log "    UVC gadget successfully removed!"
     else
-        echo "Failed to remove gadget!"
+        log "    Failed to remove UVC gadget!"
         exit 1
     fi
+
+    return 0
 }
 
 create_frame() {
@@ -121,7 +112,9 @@ create_uvc() {
     CONFIG=$1
     FUNCTION=$2
 
-    echo "    Creating UVC gadget functionality : $FUNCTION"
+    log "    Creating UVC gadget functionality: $FUNCTION"
+
+    pushd "$GADGET/g1" >/dev/null
     mkdir "functions/$FUNCTION"
 
     # create_frame "$FUNCTION" 640 360 uncompressed u
@@ -150,6 +143,8 @@ create_uvc() {
     echo 3072 > "functions/$FUNCTION/streaming_maxpacket"
 
     ln -s "functions/$FUNCTION" configs/c.1
+
+    popd >/dev/null
 }
 
 terminate() {
@@ -162,72 +157,31 @@ terminate() {
 trap terminate INT TERM
 
 do_uvc_configure() {
-    echo "    ==== Configuring USB gadget ===="
+    log "=== Configuring USB gadget"
     sleep 5
 
     if [ ! -d "$CONFIGFS" ]; then
-        echo "Configfs not mounted, please mount it first"
+        log "Configfs not mounted, please mount it first"
         exit 1
     fi
 
-    remove_all_gadgets
+    log "    Removing old uvc gadget if it exists"
+    remove_uvc_gadget
 
-    echo "Creating the USB gadget"
-
-    echo "Creating gadget directory g1"
-    mkdir -p "$GADGET/g1"
-
-    pushd "$GADGET/g1" >/dev/null
-    if [ $? -ne 0 ]; then
-        echo "Error creating usb gadget in configfs"
-        exit 1
-    else
-        echo "OK"
-    fi
-
-    echo "Setting Vendor and Product ID's"
-    echo "$VID" > idVendor
-    echo "$PID" > idProduct
-    echo "OK"
-
-    echo "Setting English strings"
-    mkdir -p strings/0x409
-    echo "$SERIAL" > strings/0x409/serialnumber
-    echo "$MANUF"  > strings/0x409/manufacturer
-    echo "$PRODUCT" > strings/0x409/product
-    echo "OK"
-
-    echo "Setting max speed to super-speed (5 Gbps)"
-    echo "super-speed" > max_speed
-
-    echo "Creating Config"
-    mkdir configs/c.1
-    mkdir configs/c.1/strings/0x409
-
-    echo "Creating functions..."
+    log "    Creating a fresh USB gadget"
     create_uvc configs/c.1 uvc.0
-    echo "OK"
-
-    echo "Binding USB Device Controller..."
-    while true; do
-        echo "$UDC" > UDC 2>/dev/null
-        if [ $? -eq 0 ]; then
-            echo "Successfully bound UDC controller $UDC"
-            sleep 1
-            break
-        fi
-        sleep 1
-    done
-
-    popd >/dev/null
-
-    echo "    ==== Configuration done ===="
+    echo "super-speed" > "$GADGET/g1/max_speed"
+    systemctl restart adbd 2>/dev/null
+    sleep 1
 }
 
-retries=0
-max_retries=5
-backoff=5
-child_pid=0
+    log "    OK"
+
+    log "=== Starting UVC APP"
+    retries=0
+    max_retries=5
+    backoff=5
+    child_pid=0
 
 case "$1" in
     start)
@@ -239,25 +193,27 @@ case "$1" in
         wait "$child_pid"
         status=$?
 
-        if [ $status -eq 0 ]; then
-            echo "uvc_example exited normally."
-            exit 0
-        fi
+      if [ $status -eq 0 ]; then
+        log "    uvc_example exited normally."
+        exit 0
+      fi
 
-        retries=$((retries + 1))
-        printf 'uvc_example exited with status %d. Restarting (%d/%d) in %ds...\n' "$status" "$retries" "$max_retries" "$backoff"
-        sleep "$backoff"
+      retries=$((retries + 1))
+      log "    uvc_example exited with status $status. Restarting ($retries/$max_retries) in ${backoff}s..."
+      sleep "$backoff"
     done
 
-    echo "uvc_example failed $max_retries times. Not restarting anymore."
+    log "    uvc_example failed $max_retries times. Not restarting anymore."
     exit 1
     ;;
 
     stop)
-    echo "    ==== Stopping the USB gadget ===="
-    remove_all_gadgets
+    log "=== Stopping the USB gadget"
+    remove_uvc_gadget
+    systemctl restart adbd 2>/dev/null
+    log "    OK"
     ;;
     *)
-    echo "Usage : $0 {start|stop}"
+    log "Usage: $0 {start|stop}"
     ;;
 esac
