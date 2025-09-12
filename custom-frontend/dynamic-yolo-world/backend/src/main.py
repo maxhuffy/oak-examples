@@ -24,6 +24,7 @@ PORT = args.port or 8080
 CLASS_NAMES = ["person", "chair", "TV"]
 MAX_NUM_CLASSES = 80
 CONFIDENCE_THRESHOLD = 0.1
+VISUALIZATION_RESOLUTION = (1080, 1080)
 
 visualizer = dai.RemoteConnection(serveFrontend=False)
 device = dai.Device(dai.DeviceInfo(args.device)) if args.device else dai.Device()
@@ -83,23 +84,38 @@ with dai.Pipeline(device) as pipeline:
     model_nn_archive = dai.NNArchive(dai.getModelFromZoo(model_description))
     model_w, model_h = model_nn_archive.getInputSize()
 
-    # media/camera input
+    # media/camera input at high resolution for visualization
     if args.media_path:
         replay = pipeline.create(dai.node.ReplayVideo)
         replay.setReplayVideoFile(Path(args.media_path))
-        replay.setOutFrameType(frame_type)
+        replay.setOutFrameType(dai.ImgFrame.Type.NV12)
         replay.setLoop(True)
         if args.fps_limit:
             replay.setFps(args.fps_limit)
-        replay.setSize(model_w, model_h)
+        replay.setSize(VISUALIZATION_RESOLUTION[0], VISUALIZATION_RESOLUTION[1])
+        video_src_out = replay.out
     else:
         cam = pipeline.create(dai.node.Camera).build(
             boardSocket=dai.CameraBoardSocket.CAM_A
         )
-        cam_out = cam.requestOutput(
-            size=(model_w, model_h), type=frame_type, fps=args.fps_limit
+        # Request high-res NV12 frames for visualization/encoding
+        video_src_out = cam.requestOutput(
+            size=VISUALIZATION_RESOLUTION, type=dai.ImgFrame.Type.NV12, fps=args.fps_limit
         )
-    input_node = replay.out if args.media_path else cam_out
+
+    image_manip = pipeline.create(dai.node.ImageManip)
+    image_manip.setMaxOutputFrameSize(model_w * model_h * 3)
+    image_manip.initialConfig.setOutputSize(model_w, model_h)
+    image_manip.initialConfig.setFrameType(frame_type)
+    video_src_out.link(image_manip.inputImage)
+
+    video_enc = pipeline.create(dai.node.VideoEncoder)
+    video_enc.setDefaultProfilePreset(
+        fps=args.fps_limit, profile=dai.VideoEncoderProperties.Profile.H264_MAIN
+    )
+    video_src_out.link(video_enc.input)
+
+    input_node = image_manip.out
 
     nn_with_parser = pipeline.create(ParsingNeuralNetwork)
     nn_with_parser.setNNArchive(model_nn_archive)
@@ -120,19 +136,30 @@ with dai.Pipeline(device) as pipeline:
     det_process_filter.setLabels(labels=[i for i in range(len(CLASS_NAMES))], keep=True)
     annotation_node = pipeline.create(AnnotationNode).build(
         det_process_filter.out,
+        video_src_out,
         label_encoding={k: v for k, v in enumerate(CLASS_NAMES)},
     )
 
-    # visualization
     if args.model_name == "yolo-world":
-        visualizer.addTopic("Video", nn_with_parser.passthroughs["images"])
+        visualizer.addTopic("Video", video_enc.out, "images")
     elif args.model_name in ("yoloe", "yoloe-image"):
         apply_colormap_node = pipeline.create(ApplyColormap).build(nn_with_parser.out)
         overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
-            nn_with_parser.passthroughs["images"],
+            video_src_out,
             apply_colormap_node.out,
         )
-        visualizer.addTopic("Video", overlay_frames_node.out, "images")
+        overlay_to_nv12 = pipeline.create(dai.node.ImageManip)
+        overlay_to_nv12.setMaxOutputFrameSize(VISUALIZATION_RESOLUTION[0] * VISUALIZATION_RESOLUTION[1] * 3)
+        overlay_to_nv12.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
+        overlay_frames_node.out.link(overlay_to_nv12.inputImage)
+
+        overlay_enc = pipeline.create(dai.node.VideoEncoder)
+        overlay_enc.setDefaultProfilePreset(
+            fps=args.fps_limit, profile=dai.VideoEncoderProperties.Profile.H264_MAIN
+        )
+        overlay_to_nv12.out.link(overlay_enc.input)
+
+        visualizer.addTopic("Video", overlay_enc.out, "images")
 
     visualizer.addTopic("Detections", annotation_node.out)
 
