@@ -22,7 +22,7 @@ prepare_build_container = [
 # Commands to execute after all files (including this TOML) are in /app
 build_steps = [
     "bash -c 'git clone https://github.com/luxonis/depthai-core.git /app/depthai-core'",
-    "bash -c 'pushd /app/depthai-core && git checkout feature/rvc4_uvc && git submodule update --init --recursive && popd'",
+    "bash -c 'pushd /app/depthai-core && git checkout 4c7c58668bea6312544224dd4e6228c6a3b8cfeb && git submodule update --init --recursive && popd'",
     "bash -c 'pushd /app/depthai-core && cmake -S . -B build -DDEPTHAI_ENABLE_CURL=OFF -DDEPTHAI_ENABLE_REMOTE_CONNECTION=OFF -DDEPTHAI_ENABLE_EVENTS_MANAGER=OFF -DDEPTHAI_ENABLE_PROTOBUF=OFF -DDEPTHAI_OPENCV_SUPPORT=OFF -DDEPTHAI_BUILD_EXAMPLES=ON && cmake --build build --target uvc_example --parallel 4 && popd'",
     "bash -c 'cp /app/depthai-core/build/examples/cpp/UVC/uvc_example /app'",
     "bash -c 'cp /app/depthai-core/build/examples/cpp/UVC/uvc-gadget/lib/libuvcgadget.so /usr/lib'",
