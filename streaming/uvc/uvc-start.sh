@@ -169,9 +169,10 @@ do_uvc_configure() {
     remove_uvc_gadget
 
     log "    Creating a fresh USB gadget"
+    systemctl stop adbd 2>/dev/null
     create_uvc configs/c.1 uvc.0
     echo "super-speed" > "$GADGET/g1/max_speed"
-    systemctl restart adbd 2>/dev/null
+    systemctl start adbd 2>/dev/null
     sleep 1
 }
 
