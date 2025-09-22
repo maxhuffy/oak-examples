@@ -152,7 +152,7 @@ Afterwards, navigate to desired application as listed below
     <td width="50%" valign="middle" align="center">
       Example of showing off the dynamic recalibration in action
       <br><br>
-      <a href="dynamic-calibration/">🔄 Dynamic calibration</a>
+      <a href="dynamic-calibration/">⚙️ Dynamic calibration</a>
     </td>
   </tr>
 </table>

@@ -1,6 +1,6 @@
 # Stereo Dynamic Calibration
 
-This example demonstrates **runtime stereo camera calibration** with the `DynamicCalibration` node, plus a host-side controller/visualizer that overlays helpful UI (help panel, coverage bar, quality/recalibration modals, and a depth ROI HUD). It integrates with the [RemoteConnection](https://rvc4.docs.luxonis.com/software/depthai-components/tools/remote_connection/) service to visualize streams in real time.
+This example demonstrates **runtime stereo camera calibration** with the `DynamicCalibration` node, plus a host-side controller/visualizer that overlays helpful UI (help panel, coverage bar, quality/recalibration modals, and a depth ROI HUD).
 
 > Works in **peripheral mode**: the device performs calibration; the host sends commands and renders overlays.
 
