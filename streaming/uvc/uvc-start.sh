@@ -140,7 +140,6 @@ create_uvc() {
 
 do_uvc_configure() {
     log "=== Configuring USB gadget"
-    sleep 5
 
     if [ ! -d "$CONFIGFS" ]; then
         log "Configfs not mounted, please mount it first"
@@ -154,7 +153,7 @@ do_uvc_configure() {
     create_uvc configs/c.1 uvc.0
     echo "super-speed" > "$GADGET/g1/max_speed"
 
-    sleep 1
+    sleep 0.1
 }
 
 uvc_bind() {
@@ -173,7 +172,7 @@ uvc_bind() {
             log "    Failed to bind UDC controller $UDC after $max_retries attempts, exiting!"
             exit 1
         fi
-        sleep 1
+        sleep 0.1
     done
 }
 
@@ -185,7 +184,7 @@ uvc_unbind() {
     while [ $retries -lt $max_retries ]; do
         echo "" > $GADGET/g1/UDC 2>/dev/null
         if [ -z "$(cat $GADGET/g1/UDC 2>/dev/null)" ]; then
-            sleep 1
+            sleep 0.1
             if [ -z "$(cat $GADGET/g1/UDC 2>/dev/null)" ]; then
                 log "    Successfully unbound UDC controller $UDC"
                 break
