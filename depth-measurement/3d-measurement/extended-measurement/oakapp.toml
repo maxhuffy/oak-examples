@@ -4,8 +4,8 @@ app_version = "1.0.0"
 
 storage_dir_name = "storage"
 prepare_container = [
-    { type = "COPY", source = "./backend/src/requirements.txt", target = "./backend/src/requirements.txt" },
-    { type = "RUN", command = "python3.12 -m pip install -r /app/backend/src/requirements.txt --break-system-packages"},
+ { type = "COPY", source = "./backend/src/requirements.txt", target = "./backend/src/requirements.txt" },
+    { type = "RUN", command = "python3.11 -m pip install -r /app/backend/src/requirements.txt --break-system-packages"},
 ]
 
 prepare_build_container = [{type = "RUN", command = "bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && . \"$HOME/.nvm/nvm.sh\" && nvm install 24'"}]
@@ -34,4 +34,4 @@ oauth_url = "https://auth.docker.io/token"
 auth_type = "repository"
 auth_name = "luxonis/oakapp-base"
 image_name = "luxonis/oakapp-base"
-image_tag = "1.2.4"
+image_tag = "1.2.6-py311"

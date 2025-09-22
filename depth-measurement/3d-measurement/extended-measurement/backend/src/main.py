@@ -1,22 +1,23 @@
 from pathlib import Path
 
 import depthai as dai
+import numpy as np
 
 from depthai_nodes.node import (
     ParsingNeuralNetwork,
-    ImgDetectionsFilter,
-    ImgFrameOverlay,
-    ApplyColormap
+    ImgDetectionsFilter
 )
 
 from utils.helper_functions import (
     extract_text_embeddings,
     extract_image_prompt_embeddings,
     base64_to_cv2_image,
+    read_intrinsics
 )
 
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
+from utils.measurement_node import MeasurementNode
 
 _, args = initialize_argparser()
 
@@ -118,15 +119,16 @@ with dai.Pipeline(device) as pipeline:
     annotation_node.out_segm.link(rgbd_seg.inColor)
     annotation_node.out_segm_depth.link(rgbd_seg.inDepth)
 
-    #apply_colormap_node = pipeline.create(ApplyColormap).build(nn_with_parser.out)   
-    apply_colormap_node = pipeline.create(ApplyColormap).build(annotation_node.out_det)
-    #apply_colormap_node.setInstanceToSemanticMask(True)
+    # Measurement node 
+    measurement_node = pipeline.create(MeasurementNode).build(
+        rgbd_seg.pcl,
+        annotation_node.out_selection
+    )            
 
-    # overlay frames
-    overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
-        nn_with_parser.passthroughs["images"],
-        apply_colormap_node.out,
-    )                   
+    measurement_node.out_result.link(annotation_node.in_meas_result)   
+
+    fx, fy, cx, cy = read_intrinsics(device, 640, 400)
+    measurement_node.setIntrinsics(fx, fy, cx, cy, imgW=640, imgH=400)  
 
     # Service functions for all functionalities of the frontend 
     def class_update_service(new_classes: list[str]):
@@ -145,7 +147,7 @@ with dai.Pipeline(device) as pipeline:
             class_names=CLASS_NAMES, max_num_classes=MAX_NUM_CLASSES, model_name=args.model_name
         )
         inputNNData = dai.NNData()
-        inputNNData.addTensor("texts", text_features, dataType=dai.TensorInfo.DataType.U8F)
+        inputNNData.addTensor("texts", text_features, dataType=dai.TensorInfo.DataType.FP16)
         textInputQueue.send(inputNNData)
 
         det_process_filter.setLabels(labels=[i for i in range(len(CLASS_NAMES))], keep=True)
@@ -161,7 +163,6 @@ with dai.Pipeline(device) as pipeline:
     def selection_service(clicks: dict):
         if clicks.get("clear"):
             annotation_node.clearSelection()
-            print("Selection cleared.")
             return {"ok": True, "cleared": True}
 
         try:
@@ -173,15 +174,34 @@ with dai.Pipeline(device) as pipeline:
         annotation_node.setKeepTopOnly(True)
         print(f"Selection point set to ({x:.3f}, {y:.3f})")
         return {"ok": True}
-
+    
+    def measurement_method_service(payload: dict):
+        """
+        Expects: {"method": "obb"|"heightgrid"}
+        """
+        method = str(payload.get("method", "")).lower()
+        if method not in ("obb", "heightgrid"):
+            return {"ok": False, "error": f"unknown method '{method}'"}
+        measurement_node.measurement_mode = method
+        if method == "heightgrid" and not measurement_node.have_plane:
+            annotation_node.requestPlaneCaptureOnce(True)
+            print("HeightGrid selected: requesting one-shot plane capture.")
+        #if method == "obb" and measurement_node.have_plane:
+            #measurement_node.reset_plane()
+        print('method, have plane: ', method, measurement_node.have_plane)
+        return {"ok": True, "method": method, "have_plane": measurement_node.have_plane}
+    
     # This is how we connect the services in the frontend to functions in the backend!
     visualizer.registerService("Selection Service", selection_service)
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService("Threshold Update Service", conf_threshold_update_service)
 
-    visualizer.addTopic("Video", overlay_frames_node.out, "images")
-    visualizer.addTopic("Detections", annotation_node.out_det)
+    visualizer.registerService("Measurement Method Service", measurement_method_service)
+
+    visualizer.addTopic("Video", cam_out, "images")
+    visualizer.addTopic("Detections", annotation_node.out_ann)
     visualizer.addTopic("Pointclouds", rgbd_seg.pcl, "point_clouds")
+    visualizer.addTopic("Measurement Overlay", measurement_node.out_ann)
 
     print("Pipeline created.")
 
@@ -189,7 +209,8 @@ with dai.Pipeline(device) as pipeline:
     visualizer.registerPipeline(pipeline)
 
     inputNNData = dai.NNData()
-    inputNNData.addTensor("texts", text_features, dataType=dai.TensorInfo.DataType.U8F)
+    inputNNData.addTensor("texts", text_features, dataType=dai.TensorInfo.DataType.FP16)
+
     textInputQueue.send(inputNNData)
 
     print("Press 'q' to stop")

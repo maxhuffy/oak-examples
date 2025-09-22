@@ -1,15 +1,22 @@
 import { css } from "../styled-system/css/css.mjs";
 import { Streams, useConnection } from "@luxonis/depthai-viewer-common";
 import { ConfidenceSlider } from "./ConfidenceSlider.tsx";
-import { ImageUploader } from "./ImageUploader.tsx";
 import { ClickCatcher } from "./ClickOverlay.tsx";
 import { ClassSelector } from "./ClassSelector.tsx";
 import { useRef } from "react";
+import { MeasurementMethodSelector } from "./MeasurementMethodSelector";
+import { Button } from "@luxonis/common-fe-components";
 
 function App() {
     const connection = useConnection();
 
     const viewerRef = useRef<HTMLDivElement>(null);
+
+    const selectionService = "Selection Service";
+
+    const clearSelection = () => {
+    (connection as any)?.daiConnection?.postToService(selectionService, { clear: true });
+    };
 
     return (
         <main className={css({
@@ -29,12 +36,14 @@ function App() {
                 topicGroups={{ images: "Images", point_clouds: "Pointclouds" }}
             />
             <ClickCatcher
-                containerRef={viewerRef}
-                frameWidth={640}
-                frameHeight={640}
-                debug
+            containerRef={viewerRef}
+            frameWidth={640}
+            frameHeight={400}
+            debug
+            allowedPanelTitle="Video" // or "[aria-label='Images']"
             />
             </div>
+
 
             {/* Vertical Divider */}
             <div className={css({
@@ -49,20 +58,28 @@ function App() {
                 flexDirection: 'column',
                 gap: 'md'
             })}>
-                <h1 className={css({ fontSize: '2xl', fontWeight: 'bold' })}>
+                <h1 className={css({ fontSize: 'xl', fontWeight: 'bold' })}>
                     Extended 3D Measurement Application
                 </h1>
                 <p>
-                    This example lets you click any detected object in the live view to segment it and get its 3D dimensions and volume.
+                    This example combines a YOLOE segmentation model with DepthAI point clouds to measure real-world objects in 3D.
+                    Click any detected object in the Video panel to segment it and get its dimensions and volume.
                 </p>
 
                 <ClassSelector />
 
-                {/* Image Uploader */}
-                <ImageUploader />
-
                 {/* Confidence Slider */}
                 <ConfidenceSlider initialValue={0.3} />
+
+                <Button
+                onClick={clearSelection}         
+                alignSelf="start"
+                title="Removes the current segmented object. Keeps classes and settings."
+                >
+                Clear selected object
+                </Button>
+
+                <MeasurementMethodSelector />
 
                 {/* Connection Status */}
                 <div className={css({

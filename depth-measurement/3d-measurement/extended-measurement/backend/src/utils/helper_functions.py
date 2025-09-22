@@ -5,6 +5,7 @@ import onnxruntime
 import numpy as np
 import cv2
 import base64
+import depthai as dai
 
 QUANT_ZERO_POINT = 90.0
 QUANT_SCALE = 0.003925696481
@@ -38,9 +39,9 @@ def pad_and_quantize_features(features, max_num_classes=80, model_name="yolo-wor
     padded_features = np.pad(
         features, ((0, num_padding), (0, 0)), mode="constant"
     ).T.reshape(1, 512, max_num_classes)
-    quantized_features = (padded_features / quant_scale) + quant_zero_point
-    quantized_features = quantized_features.astype("uint8")
-    return quantized_features
+    #quantized_features = (padded_features / quant_scale) + quant_zero_point
+    #quantized_features = quantized_features.astype("uint8")
+    return padded_features #quantized_features
 
 
 def extract_text_embeddings(class_names, max_num_classes=80, model_name="yolo-world"):
@@ -204,3 +205,15 @@ def base64_to_cv2_image(base64_data_uri: str):
     np_arr = np.frombuffer(binary_data, np.uint8)
     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     return img
+
+def read_intrinsics(device: dai.Device, width: int, height: int) -> tuple:
+    """Reads the camera intrinsics from the device and returns the focal lengths and principal points."""
+    calibData = device.readCalibration2()
+    M2 = np.array(
+        calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A, width, height)
+    )  # Because the displayed image is with NN input res
+    fx = M2[0, 0]
+    fy = M2[1, 1]
+    cx = M2[0, 2]
+    cy = M2[1, 2]
+    return fx, fy, cx, cy

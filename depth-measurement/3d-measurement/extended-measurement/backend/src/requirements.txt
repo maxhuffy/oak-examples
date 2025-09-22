@@ -4,5 +4,6 @@ opencv-python-headless~=4.10.0
 numpy>=1.22
 tokenizers~=0.21.0
 onnxruntime
+open3d~=0.18
 # onnxruntime-gpu # if you want to use CUDAExecutionProvider
 requests

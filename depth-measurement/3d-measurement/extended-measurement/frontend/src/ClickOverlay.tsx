@@ -10,11 +10,13 @@ export function ClickCatcher({
   frameHeight = 640,
   serviceName = "Selection Service",
   debug = false,
+  allowedPanelTitle, 
 }: {
   containerRef: React.RefObject<HTMLElement>;
   frameWidth?: number;
   frameHeight?: number;
   serviceName?: string;
+  allowedPanelTitle?: string;
   debug?: boolean;
 }) {
   const { daiConnection } = useConnection();
@@ -37,6 +39,31 @@ export function ClickCatcher({
       ) as HTMLCanvasElement | HTMLVideoElement | HTMLImageElement | undefined;
 
       if (!media) return;
+
+      // The Streams panel name is embedded in the nearest <section>'s text, e.g. "Video(640x640)" or "Pointclouds3D"
+      const panel = media.closest("section") as HTMLElement | null;
+      const panelText = panel?.textContent?.trim().toLowerCase() ?? "";
+
+      if (debug) {
+        console.log("[ClickCatcher] panelText:", panelText);
+        console.log("[ClickCatcher] allowedPanelTitle:", allowedPanelTitle);
+      }
+
+      // Allow only if the panel text contains the expected title (e.g., "images" or "video")
+      if (allowedPanelTitle && !panelText.includes(allowedPanelTitle.toLowerCase())) {
+        if (debug) console.log("ignored: panel text mismatch");
+        return;
+      }
+
+      const looks3D =
+        media instanceof HTMLCanvasElement &&
+        (media.hasAttribute("data-camera-controls-version") ||
+        getComputedStyle(media).touchAction === "none");
+
+      if (looks3D) {
+        if (debug) console.log("ignored: 3D/Pointcloud canvas");
+        return;
+      }
 
       const rect = media.getBoundingClientRect();
       const px = e.clientX - rect.left;
@@ -96,7 +123,7 @@ export function ClickCatcher({
       host.removeEventListener("click", onClick);
       host.removeEventListener("contextmenu", onContextMenu);
     };
-  }, [containerRef, frameWidth, frameHeight, serviceName, debug, daiConnection]);
+  }, [containerRef, frameWidth, frameHeight, serviceName, debug, daiConnection, allowedPanelTitle]);
 
   return null;
 }
