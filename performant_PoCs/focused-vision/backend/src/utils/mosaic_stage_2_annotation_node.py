@@ -1,20 +1,26 @@
 from typing import List, Tuple
 import depthai as dai
-from depthai_nodes.utils import AnnotationHelper
-from .mosaic_layout_node import _compute_mosaic_layout
+
 from depthai_nodes.message.gathered_data import GatheredData
+from .mosaic_layout_node import _compute_mosaic_layout
+from depthai_nodes.utils import AnnotationHelper
+
+from depthai_nodes import ImgDetectionsExtended
+from depthai_nodes.message import Keypoints
 
 
 class MosaicStage2AnnotationNode(dai.node.HostNode):
     """
-    Draw boxes from each crop onto a single mosaic-sized annotation.
+    Merge detections from each crop into one message and REMAP their coordinates
+    from crop-normalized -> mosaic-normalized.
 
     Input (via link_args): GatherData bundle
-        - msg.reference_data : stage-1 dets (used for ts/seq only)
-        - msg.gathered       : List[...] from stage-2 on crops
-          (expects each item to have `.detections` with d.xmin/ymin/xmax/ymax in 0..1 crop space)
+      - msg.reference_data : (for ts/seq)
+      - msg.gathered       : List[ImgDetectionsExtended] OR List[Keypoints]
+
     Output:
-        - self.out : annotation buffer, stamped with reference ts/seq
+      - self.out : Same message type as input (ImgDetectionsExtended or Keypoints),
+                   with all items remapped to the mosaic canvas.
     """
 
     def __init__(self):
@@ -23,10 +29,10 @@ class MosaicStage2AnnotationNode(dai.node.HostNode):
         self.crop_w = self.crop_h = None
 
     def build(
-        self,
-        gathered_pair_out: dai.Node.Output,
-        mosaic_size: Tuple[int, int],
-        crop_size: Tuple[int, int],
+            self,
+            gathered_pair_out: dai.Node.Output,
+            mosaic_size: Tuple[int, int],
+            crop_size: Tuple[int, int],
     ) -> "MosaicStage2AnnotationNode":
         self.mosaic_w, self.mosaic_h = map(int, mosaic_size)
         self.crop_w, self.crop_h = map(int, crop_size)
@@ -34,45 +40,75 @@ class MosaicStage2AnnotationNode(dai.node.HostNode):
         return self
 
     @staticmethod
-    def _letterbox(tile_w: int, tile_h: int, crop_w: int, crop_h: int):
-        """
-        Scale crop to fit inside tile and center (letterbox).
-        Returns (s, x0, y0) where:
-          s  : scale factor
-          x0 : left offset inside tile
-          y0 : top offset inside tile
-        """
-        s = min(tile_w / max(1, crop_w), tile_h / max(1, crop_h))
-        x0 = (tile_w - int(crop_w * s)) // 2
-        y0 = (tile_h - int(crop_h * s)) // 2
+    def _letterbox(tile_w: int, tile_h: int, src_w: int, src_h: int):
+        """Return (scale, off_x, off_y) in tile pixels for letterboxed fit."""
+        s = min(tile_w / max(1, src_w), tile_h / max(1, src_h))
+        x0 = (tile_w - int(src_w * s)) // 2
+        y0 = (tile_h - int(src_h * s)) // 2
         return s, x0, y0
 
-    def _draw_boxes_on_tile(
-        self,
-        ann: AnnotationHelper,
-        boxes_crop_norm: List[Tuple[float, float, float, float]],
-        tile_x: int, tile_y: int, tile_w: int, tile_h: int,
-    ):
-        """
-        Map crop boxes → tile px (with letterbox) → mosaic-normalized, then draw.
-        """
+    def _remap_point_crop_to_mosaic(
+            self, nx: float, ny: float, tile_x: int, tile_y: int, tile_w: int, tile_h: int
+    ) -> Tuple[float, float]:
+        """Remap a normalized crop-space point -> mosaic-normalized point."""
         s, x0, y0 = self._letterbox(tile_w, tile_h, self.crop_w, self.crop_h)
+        cx = nx * self.crop_w
+        cy = ny * self.crop_h
+        tx = x0 + cx * s
+        ty = y0 + cy * s
+        mx = (tile_x + tx) / self.mosaic_w
+        my = (tile_y + ty) / self.mosaic_h
+        return float(mx), float(my)
 
-        for nx1, ny1, nx2, ny2 in boxes_crop_norm:
-            # crop-normalized -> crop px
-            cx1, cy1 = nx1 * self.crop_w, ny1 * self.crop_h
-            cx2, cy2 = nx2 * self.crop_w, ny2 * self.crop_h
-            # crop px -> tile px with letterbox
-            tx1 = x0 + int(cx1 * s)
-            ty1 = y0 + int(cy1 * s)
-            tx2 = x0 + int(cx2 * s)
-            ty2 = y0 + int(cy2 * s)
-            # tile px -> mosaic-normalized
-            mx1 = (tile_x + tx1) / self.mosaic_w
-            my1 = (tile_y + ty1) / self.mosaic_h
-            mx2 = (tile_x + tx2) / self.mosaic_w
-            my2 = (tile_y + ty2) / self.mosaic_h
-            ann.draw_rectangle([mx1, my1], [mx2, my2])
+    def _remap_rotated_rect(
+            self, det, tile_x: int, tile_y: int, tile_w: int, tile_h: int
+    ) -> None:
+        """
+        Remap det.rotated_rect (center/size/angle) from crop-normalized to mosaic-normalized.
+        Mutates `det` in place (safe: call on a copy).
+        """
+        rr = getattr(det, "rotated_rect", None)
+        if rr is None or not hasattr(rr, "center") or not hasattr(rr, "size"):
+            return
+
+        cx = float(rr.center.x) * self.crop_w
+        cy = float(rr.center.y) * self.crop_h
+        w = float(rr.size.width) * self.crop_w
+        h = float(rr.size.height) * self.crop_h
+
+        s, x0, y0 = self._letterbox(tile_w, tile_h, self.crop_w, self.crop_h)
+        tx = x0 + cx * s
+        ty = y0 + cy * s
+        tw = max(1e-6, w * s)
+        th = max(1e-6, h * s)
+
+        mx = (tile_x + tx) / self.mosaic_w
+        my = (tile_y + ty) / self.mosaic_h
+        mw = tw / self.mosaic_w
+        mh = th / self.mosaic_h
+        angle = float(getattr(rr, "angle", 0.0))
+
+        try:
+            det.rotated_rect = (mx, my, mw, mh, angle)
+        except Exception:
+            pass
+
+    def _remap_keypoints_in_place(
+            self, keypoints_list: List, tile_x: int, tile_y: int, tile_w: int, tile_h: int
+    ) -> None:
+        """Remap a list of keypoints (each has .x/.y normalized to crop) to mosaic-normalized."""
+        if not keypoints_list:
+            return
+        s, x0, y0 = self._letterbox(tile_w, tile_h, self.crop_w, self.crop_h)
+        for kp in keypoints_list:
+            if not hasattr(kp, "x") or not hasattr(kp, "y"):
+                continue
+            kx_px = float(kp.x) * self.crop_w
+            ky_px = float(kp.y) * self.crop_h
+            kx_tile = x0 + kx_px * s
+            ky_tile = y0 + ky_px * s
+            kp.x = (tile_x + kx_tile) / self.mosaic_w
+            kp.y = (tile_y + ky_tile) / self.mosaic_h
 
     def process(self, msg) -> None:
         if isinstance(msg, GatheredData):
@@ -83,38 +119,68 @@ class MosaicStage2AnnotationNode(dai.node.HostNode):
             gathered = []
 
         if not gathered:
-            out = AnnotationHelper().build(timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum()) if ref else AnnotationHelper().build()
-            self.out.send(out)
+            empty = AnnotationHelper().build(
+                timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum()
+            ) if ref else AnnotationHelper().build()
+            self.out.send(empty)
             return
 
-        ann = AnnotationHelper()
-
-        # Compute mosaic tiles
         layout = _compute_mosaic_layout(len(gathered))
 
+        out = gathered[0]
+
+        merged_dets: List = []
+        merged_kps: List = []
+        merged_edges: List[Tuple[int, int]] = []
+
         for i, crop_msg in enumerate(gathered):
-            if i >= len(layout):
-                break
-            dets = getattr(crop_msg, "detections", None)
-            if not dets:
+            if i >= len(layout) or crop_msg is None:
                 continue
 
-            x, y, w, h = layout[i]
-            tile_x = int(x * self.mosaic_w)
-            tile_y = int(y * self.mosaic_h)
-            tile_w = max(1, int(w * self.mosaic_w))
-            tile_h = max(1, int(h * self.mosaic_h))
+            x_n, y_n, w_n, h_n = layout[i]
+            tile_x = int(x_n * self.mosaic_w)
+            tile_y = int(y_n * self.mosaic_h)
+            tile_w = max(1, int(w_n * self.mosaic_w))
+            tile_h = max(1, int(h_n * self.mosaic_h))
 
-            boxes: List[Tuple[float, float, float, float]] = []
-            for d in dets:
-                boxes.append((float(d.xmin), float(d.ymin), float(d.xmax), float(d.ymax)))
-            if not boxes:
-                continue
+            if isinstance(crop_msg, ImgDetectionsExtended):
+                dets = getattr(crop_msg, "detections", None)
+                if not dets:
+                    continue
+                for det in dets:
+                    try:
+                        d = det.copy()
+                    except Exception:
+                        d = det
+                    self._remap_rotated_rect(d, tile_x, tile_y, tile_w, tile_h)
+                    kps = getattr(d, "keypoints", None)
+                    if kps:
+                        self._remap_keypoints_in_place(kps, tile_x, tile_y, tile_w, tile_h)
+                    merged_dets.append(d)
 
-            self._draw_boxes_on_tile(ann, boxes, tile_x, tile_y, tile_w, tile_h)
+            elif isinstance(crop_msg, Keypoints):
+                kps = getattr(crop_msg, "keypoints", None)
+                if not kps:
+                    continue
 
-        if ref is not None:
-            out = ann.build(timestamp=ref.getTimestamp(), sequence_num=ref.getSequenceNum())
-        else:
-            out = ann.build()
+                idx_offset = len(merged_kps)
+
+                for kp in kps:
+                    try:
+                        k = kp.copy()
+                    except Exception:
+                        k = kp
+                    self._remap_keypoints_in_place([k], tile_x, tile_y, tile_w, tile_h)
+                    merged_kps.append(k)
+
+                crop_edges = list(getattr(crop_msg, "edges", [])) or []
+                for a, b in crop_edges:
+                    merged_edges.append((idx_offset + int(a), idx_offset + int(b)))
+
+        if isinstance(out, ImgDetectionsExtended):
+            out.detections = merged_dets
+        elif isinstance(out, Keypoints):
+            out.keypoints = merged_kps
+            out.edges = merged_edges
+
         self.out.send(out)

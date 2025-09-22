@@ -4,15 +4,14 @@ import depthai as dai
 from depthai_nodes.node import GatherData, ParsingNeuralNetwork, ImgDetectionsBridge
 from depthai_nodes.node.utils import generate_script_content
 
-from utils.stage_1_annotation_node import Stage1AnnotationNode
-from utils.mosaic_stage_2_annotation_node import MosaicStage2AnnotationNode
 from utils.arguments import initialize_argparser
 from utils.mosaic_layout_node import MosaicLayoutNode
-from utils.non_focused_annotation_node import NonFocusedAnnotationNode
+from utils.mosaic_stage_2_annotation_node import MosaicStage2AnnotationNode
+from utils.safe_img_detections_bridge import SafeImgDetectionsBridge
 
 _, args = initialize_argparser()
 
-INPUT_WIDTH, INPUT_HEIGHT = 3840, 2160
+INPUT_WIDTH, INPUT_HEIGHT = 1920, 1080
 STAGE_1_MODEL = "luxonis/yunet:320x240"
 STAGE_2_MODEL = "luxonis/eye-detection:512x512"
 
@@ -80,6 +79,10 @@ with dai.Pipeline(device) as pipeline:
         resize_non_focused.out, stage_2_model_archive
     )
 
+    non_focused_bridge = pipeline.create(SafeImgDetectionsBridge).build(
+        non_focused_nn.out
+    )
+
     # stage1 resize + NN
     resize_stage1 = pipeline.create(dai.node.ImageManip)
     resize_stage1.setMaxOutputFrameSize(stage_1_model_input_width * stage_1_model_input_height * 3)
@@ -91,13 +94,15 @@ with dai.Pipeline(device) as pipeline:
     resize_stage1.initialConfig.setFrameType(frame_type)
     input_node.link(resize_stage1.inputImage)
 
-    stage1_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(resize_stage1.out, stage_1_model_archive)
+    stage1_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(
+        resize_stage1.out, stage_1_model_archive
+    )
 
-    det_bridge = pipeline.create(ImgDetectionsBridge).build(
+    stage1_detections_bridge = pipeline.create(ImgDetectionsBridge).build(
         stage1_nn.out
     )  # TODO: remove once we have it working with ImgDetectionsExtended
     script = pipeline.create(dai.node.Script)
-    det_bridge.out.link(script.inputs["det_in"])
+    stage1_detections_bridge.out.link(script.inputs["det_in"])
     input_node.link(script.inputs["preview"])
     script_content = generate_script_content(
         resize_width=stage_2_model_input_width,
@@ -117,18 +122,22 @@ with dai.Pipeline(device) as pipeline:
     script.outputs["manip_cfg"].link(stage_1_detection_crop.inputConfig)
     script.outputs["manip_img"].link(stage_1_detection_crop.inputImage)
 
-    # stage2 on SAME crops
+    # stage-2 on crops
     stage_1_detection_crop_to_nn = pipeline.create(dai.node.ImageManip)
     stage_1_detection_crop_to_nn.setMaxOutputFrameSize(stage_2_model_input_width * stage_2_model_input_height * 3)
     stage_1_detection_crop_to_nn.initialConfig.setOutputSize(stage_2_model_input_width, stage_2_model_input_height)
     stage_1_detection_crop.out.link(stage_1_detection_crop_to_nn.inputImage)
 
-    stage2_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(stage_1_detection_crop_to_nn.out,
-                                                                                  stage_2_model_archive)
+    stage2_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(
+        stage_1_detection_crop_to_nn.out, stage_2_model_archive
+    )
 
     # gather for full-frame 2-nd stage annotation overlay
+    stage2_detections_bridge = pipeline.create(SafeImgDetectionsBridge).build(
+        stage2_nn.out
+    )
     gather = pipeline.create(GatherData).build(args.fps_limit)
-    stage2_nn.out.link(gather.input_data)
+    stage2_detections_bridge.out.link(gather.input_data)
     stage1_nn.out.link(gather.input_reference)
 
     gather_crops = pipeline.create(GatherData).build(args.fps_limit)
@@ -144,16 +153,13 @@ with dai.Pipeline(device) as pipeline:
     mosaic_layout.frame_type = frame_type
 
     # annotations
-    stage_1_annotation = pipeline.create(Stage1AnnotationNode).build(gather.out)
-
     mosaic_annotation = pipeline.create(MosaicStage2AnnotationNode).build(
         gathered_pair_out=gather.out,
         mosaic_size=(stage_2_model_input_width, stage_2_model_input_height),
         crop_size=(stage_2_model_input_width, stage_2_model_input_height),
     )
 
-    non_focused = pipeline.create(NonFocusedAnnotationNode).build(non_focused_nn.out)
-
+    # encoders
     video_enc = pipeline.create(dai.node.VideoEncoder)
     video_enc.setDefaultProfilePreset(
         fps=args.fps_limit, profile=dai.VideoEncoderProperties.Profile.H264_MAIN
@@ -180,15 +186,21 @@ with dai.Pipeline(device) as pipeline:
     mosaic_NV12 = convert_to_nv12(mosaic_layout.output, stage_2_model_input_width, stage_2_model_input_height)
     mosaic_NV12.out.link(mosaic_enc.input)
 
-    resize_non_focused_NV12 = convert_to_nv12(resize_non_focused.out, stage_2_model_input_width, stage_2_model_input_height)
+    resize_non_focused_NV12 = convert_to_nv12(
+        resize_non_focused.out, stage_2_model_input_width, stage_2_model_input_height
+    )
     resize_non_focused_NV12.out.link(non_focused_enc.input)
 
+    # visualizer topics
     visualizer.addTopic("Video", video_enc.out, "images")
+    visualizer.addTopic("Detections Stage 1", stage1_nn.out, "annotations")
+
     visualizer.addTopic("Crops Mosaic", mosaic_enc.out, "images")
-    visualizer.addTopic("Detections Stage 1", stage_1_annotation.out, "annotations")
+
     visualizer.addTopic("Detections Stage 2 Crops", mosaic_annotation.out, "annotations")
+
     visualizer.addTopic("Non Focused Video", non_focused_enc.out, "images")
-    visualizer.addTopic("Detections Non Focused", non_focused.out, "annotations")
+    visualizer.addTopic("Detections Non Focused", non_focused_bridge.out, "annotations")
 
     pipeline.start()
     visualizer.registerPipeline(pipeline)
