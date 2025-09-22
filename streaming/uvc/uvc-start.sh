@@ -34,15 +34,6 @@ remove_uvc_gadget() {
 
     pushd /sys/kernel/config/usb_gadget/g1 >/dev/null
 
-    log "    Disabling ADBD service and unbinding USB Device Controller..."
-    systemctl stop adbd 2>/dev/null
-    echo "" > UDC 2>/dev/null
-    # Check if UDC is empty
-    if [ ! -z "$(cat UDC 2>/dev/null)" ]; then
-        log "    UDC is not empty, exiting!"
-        exit 1
-    fi
-
     rm configs/c.1/uvc.0 2>/dev/null
 
     rm functions/uvc.0/streaming/header/h/* 2>/dev/null
@@ -169,14 +160,60 @@ do_uvc_configure() {
     remove_uvc_gadget
 
     log "    Creating a fresh USB gadget"
-    systemctl stop adbd 2>/dev/null
     create_uvc configs/c.1 uvc.0
     echo "super-speed" > "$GADGET/g1/max_speed"
-    systemctl start adbd 2>/dev/null
+
     sleep 1
 }
 
-    log "    OK"
+uvc_bind() {
+    log "    Rebinding USB Device Controller..."
+    # Hacky: retry binding until it is bound. Some other process is trying to interfere here but not yet sure which
+    max_retries=10
+    retries=0
+    while true; do
+        echo $UDC > $GADGET/g1/UDC 2>/dev/null
+        if [[ "$(cat "$GADGET/g1/UDC" 2>/dev/null)" == "$UDC" ]]; then
+            log "    Successfully bound UDC controller $UDC"
+            break
+        fi
+        retries=$((retries + 1))
+        if [ $retries -eq $max_retries ]; then
+            log "    Failed to bind UDC controller $UDC after $max_retries attempts, exiting!"
+            exit 1
+        fi
+        sleep 1
+    done
+}
+
+uvc_unbind() {
+    log "    Unbinding USB Device Controller..."
+    # Hacky: retry unbinding until it is unbound. Some other process is trying to interfere here but not yet sure which
+    max_retries=10
+    retries=0
+    while [ $retries -lt $max_retries ]; do
+        echo "" > $GADGET/g1/UDC 2>/dev/null
+        if [ -z "$(cat $GADGET/g1/UDC 2>/dev/null)" ]; then
+            sleep 1
+            if [ -z "$(cat $GADGET/g1/UDC 2>/dev/null)" ]; then
+                log "    Successfully unbound UDC controller $UDC"
+                break
+            fi
+        fi
+        retries=$((retries + 1))
+    done
+    # Check if UDC is empty
+    if [ ! -z "$(cat $GADGET/g1/UDC 2>/dev/null)" ]; then
+        log "    UDC is not empty after $max_retries unbind attempts, exiting!"
+        exit 1
+    fi
+}
+
+case "$1" in
+    start)
+    uvc_unbind
+    do_uvc_configure
+    uvc_bind
 
     log "=== Starting UVC APP"
     retries=0
@@ -184,8 +221,6 @@ do_uvc_configure() {
     backoff=5
     child_pid=0
 
-case "$1" in
-    start)
     while [ $retries -lt $max_retries ]; do
         /app/uvc_example &
         child_pid=$!
@@ -208,8 +243,9 @@ case "$1" in
 
     stop)
     log "=== Stopping the USB gadget"
+    uvc_unbind
     remove_uvc_gadget
-    systemctl restart adbd 2>/dev/null
+    uvc_bind
     log "    OK"
     ;;
     *)
