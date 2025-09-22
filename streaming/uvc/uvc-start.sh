@@ -19,7 +19,7 @@ fi
 
 MANUF="Luxonis"
 PRODUCT="Luxonis UVC Camera"
-UDC=$(ls /sys/class/udc) # will identify the 'first' UDC
+UDC=$(ls /sys/class/udc | head -n1) # will identify the 'first' UDC
 
 log "=== Detecting platform:"
 log "    product : $PRODUCT"
