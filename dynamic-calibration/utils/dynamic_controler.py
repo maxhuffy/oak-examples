@@ -1,4 +1,5 @@
 from typing import Optional, Tuple
+from collections import deque
 import numpy as np
 import time
 
@@ -58,6 +59,11 @@ class DynamicCalibrationControler(dai.node.HostNode):
         self._cursor_xy = None  # (x,y) in depth pixels
         self._roi_half = 10  # radius in depth pixels (=> (2h+1)^2 window)
         self._hud_on = True  # toggle with 'g'
+
+        self._avg_len = 10
+        self._roi_mean_hist = deque(maxlen=self._avg_len)
+        self._center_hist = deque(maxlen=self._avg_len)
+        self._hist_cursor_xy = None
 
         self.out_annotations = self.createOutput(
             possibleDatatypes=[
@@ -135,17 +141,56 @@ class DynamicCalibrationControler(dai.node.HostNode):
         roi = self._last_depth[y0:y1, x0:x1]
 
         # stats (ignore zeros if depth)
+        if self._hist_cursor_xy != (cx, cy):
+            self._roi_mean_hist.clear()
+            self._center_hist.clear()
+            self._hist_cursor_xy = (cx, cy)
+
         if self._depth_is_mm:
             valid = roi > 0
-            center_val = float(self._last_depth[cy, cx]) / 1000.0  # mm → m
-            mean_val = (
-                float(roi[valid].mean() / 1000.0) if np.any(valid) else float("nan")
+
+            # center (mm)
+            center_mm = float(self._last_depth[cy, cx])
+            if center_mm > 0:
+                self._center_hist.append(center_mm)
+
+            # roi mean (mm)
+            if np.any(valid):
+                roi_mean_mm = float(roi[valid].mean())
+                self._roi_mean_hist.append(roi_mean_mm)
+
+            # aggregated (m)
+            if len(self._center_hist) > 0:
+                center_val = float(np.mean(self._center_hist)) / 1000.0
+            else:
+                center_val = float("nan")
+
+            if len(self._roi_mean_hist) > 0:
+                mean_val = float(np.mean(self._roi_mean_hist)) / 1000.0
+            else:
+                mean_val = float("nan")
+
+            val_text = (
+                f"Depth: {center_val:.2f} m, "
+                f"ROI mean: {mean_val:.2f} m "
+                f"(avg {len(self._roi_mean_hist)}/{self._avg_len})"
             )
-            val_text = f"Depth: {center_val:.2f} m, ROI mean: {mean_val:.2f} m"
         else:
-            center_val = float(self._last_depth[cy, cx])
-            mean_val = float(roi.mean())
-            val_text = f"Disp: {center_val:.1f}, ROI mean: {mean_val:.1f}"
+            # disparity path (no zero filtering)
+            center_disp = float(self._last_depth[cy, cx])
+            roi_mean_disp = float(roi.mean())
+
+            self._center_hist.append(center_disp)
+            self._roi_mean_hist.append(roi_mean_disp)
+
+            center_val = float(np.mean(self._center_hist))
+            mean_val = float(np.mean(self._roi_mean_hist))
+
+            val_text = (
+                f"Disp: {center_val:.1f}, "
+                f"ROI mean: {mean_val:.1f} "
+                f"(avg {len(self._roi_mean_hist)}/{self._avg_len})"
+            )
 
         # normalized positions relative to preview (assume 1:1 mapping depth→preview)
         u = (cx + 0.5) / W

@@ -1,3 +1,4 @@
+from collections import deque
 import numpy as np
 import cv2
 import time
@@ -13,7 +14,10 @@ from helper_functions import (
     print_final_calibration_results,
 )
 
-
+# Rolling average for depth ROI means
+DEPTH_HISTORY_SIZE = 10
+depth_history = deque(maxlen=DEPTH_HISTORY_SIZE)
+last_mouse_pos = None  # reset history if mouse moves to new pixel
 mouse_coords = (-1, -1)
 
 
@@ -234,7 +238,7 @@ with pipeline:
                 cy = int(round(local_y * 2))
                 cx = int(round(local_x * 2))
 
-                half = 10  # 9x9 window → radius 4
+                half = 10  # ROI radius → window size = 2*half + 1
                 y0 = max(0, cy - half)
                 y1 = min(depth_frame.shape[0], cy + half + 1)
                 x0 = max(0, cx - half)
@@ -242,15 +246,23 @@ with pipeline:
 
                 roi = depth_frame[y0:y1, x0:x1].astype(np.float32)
 
-                # If you want to ignore invalid zeros (common in depth):
+                # Rolling-mean over last 10 frames; clears if cursor center changes
+                cur_mouse_pos = (cx, cy)
+                if last_mouse_pos != cur_mouse_pos:
+                    depth_history.clear()
+                    last_mouse_pos = cur_mouse_pos
+
                 valid = roi > 0
                 if np.any(valid):
-                    depth_val = float(roi[valid].mean()) / 1000.0  # mm → m
+                    depth_mm = float(roi[valid].mean())   # in millimeters
+                    depth_history.append(depth_mm)
+                # else: keep previous history if current ROI is invalid
+
+                if len(depth_history) > 0:
+                    depth_val = float(np.mean(depth_history)) / 1000.0  # mm -> m
                 else:
                     depth_val = float("nan")
-                depth_val = (
-                    depth_frame[int(local_y * 2), int(local_x * 2)] / 1000.0
-                )  # mm -> meters
+
                 display_text_depth = f"Depth: {depth_val:.2f}m"
                 text_pos = (scaled_mouse_x + 10, scaled_mouse_y + 10)
                 disp_x0 = disp_x_start + (x0 // 2)
