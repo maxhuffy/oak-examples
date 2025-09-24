@@ -220,9 +220,11 @@ trap terminate INT TERM
 
 case "$1" in
     start)
+    sleep 1 # Allow USB to setup
+
     retries=0
     max_retries=5
-    backoff=5
+    backoff=2
     child_pid=0
 
     while [ $retries -lt $max_retries ]; do
@@ -243,7 +245,7 @@ case "$1" in
         fi
 
         retries=$((retries + 1))
-        log "    uvc_example exited with status $status. Restarting ($retries/$max_retries) in ${backoff}s..."
+        log "    uvc_example exited with status $status. Restarting ($retries/$max_retries)..."
         sleep "$backoff"
     done
 
