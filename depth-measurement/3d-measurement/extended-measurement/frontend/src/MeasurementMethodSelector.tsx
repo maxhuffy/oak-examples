@@ -13,9 +13,10 @@ const DESCRIPTIONS: Record<MeasurementMethod, string[]> = {
     "Provides a fast upper bound on the object's volume.",
   ],
   heightgrid: [
-    "Requires the object to rest on a planar surface (e.g. desk or floor).",
-    "Builds a height grid over the object's footprint and integrates height to get volume.",
-    "Often more accurate for on-desk items, but sensitive to plane fit errors.",
+    "Requires the object to rest on a flat surface (e.g. desk or floor).",
+    "Builds a height grid over the object's footprint on the support plane. Total volume is the sum of the grid cell volumes.",
+    "Dimensions are still shown as a box (L, W, H), but the volume comes from the height grid integration.",
+    "More accurate for irregular shapes, but sensitive to errors in plane fitting.",
   ],
 };
 

@@ -4,6 +4,7 @@ import traceback
 import json
 import time
 from depthai_nodes.utils import AnnotationHelper
+from collections import deque
 
 from .PointCloudMeasurement import PointCloudMeasurement
 
@@ -29,13 +30,15 @@ class MeasurementNode(dai.node.ThreadedHostNode):
     """
     MODE_NOMEASURE = 0
     MODE_MEASURE   = 1
-    #MODE_PLANE     = 2  
+    MODE_PLANE     = 2  
 
     def __init__(self):
         dai.node.ThreadedHostNode.__init__(self)
 
         self.in_pcl = self.createInput()
         self.in_enable_measure = self.createInput()
+
+        self.in_imu = self.createInput()
 
         self.out_result = self.createOutput()
         self.out_ann    = self.createOutput()
@@ -49,19 +52,52 @@ class MeasurementNode(dai.node.ThreadedHostNode):
         self.imgW = IMG_WIDTH
         self.imgH = IMG_HEIGHT
 
-    def build(self, pcl: dai.Node.Output, measure: dai.Node.Output):
+        self._last_dims = deque(maxlen=30)
+        self._last_vol = deque(maxlen=30)
+
+        self.an_node = None 
+
+    def build(self, pcl: dai.Node.Output, measure: dai.Node.Output, imu: dai.Node.Output):
         pcl.link(self.in_pcl)
         measure.link(self.in_enable_measure)
+        imu.link(self.in_imu)
         return self
     
-    def reset_plane(self):
-        self.pcl_measure.clear_plane()
-        self.have_plane = False
-
     def setIntrinsics(self, fx, fy, cx, cy, imgW, imgH):
         self.intrinsics = (float(fx), float(fy), float(cx), float(cy))
         self.imgW = int(imgW)
         self.imgH = int(imgH)
+    
+    def reset_plane(self):
+        self.pcl_measure.clear_plane()
+        self.have_plane = False
+    
+    def reset_measurements(self):
+        self._last_dims.clear()
+        self._last_vol.clear()
+
+    def push_measurements(self, dims_cm, vol_cm3):
+        if dims_cm.size == 3 and np.all(np.isfinite(dims_cm)):
+            self._last_dims.append(tuple(float(x) for x in dims_cm))
+        if isinstance(vol_cm3, (int, float)) and np.isfinite(vol_cm3):
+            self._last_vol.append(float(vol_cm3))
+
+    def _emit_median(self, pcl_msg, dims_cm, vol_cm3):
+        self.push_measurements(dims_cm, vol_cm3)
+
+        dims_out = None
+        vol_out = None
+
+        if self._last_dims:
+            arr = np.asarray(self._last_dims, dtype=np.float64)  # shape (n,3)
+            dims_out = np.median(arr, axis=0).round(2).tolist()
+        
+        if self._last_vol:
+            v = np.asarray(self._last_vol, dtype=np.float64)
+            vol_out = float(np.median(v).round(2))
+        
+        self._emit_result_min(pcl_msg, dims_out, vol_out)
+
 
     # ---------------- helpers for box outline annotations ---------------
     def _emit_result_min(self, pcl_msg: dai.PointCloudData, dims_cm, volume_cm3):
@@ -148,6 +184,10 @@ class MeasurementNode(dai.node.ThreadedHostNode):
 
             # 2) drain PCL queue
             while True:
+                imu_msg = self.in_imu.tryGet()
+                if imu_msg is None:
+                    time.sleep(0.001)
+                    continue 
                 pc = self.in_pcl.tryGet()
                 if not pc:
                     break
@@ -171,13 +211,46 @@ class MeasurementNode(dai.node.ThreadedHostNode):
 
                 assert isinstance(pcl_msg, dai.PointCloudData)
 
-                mode_val = int(bytes(mode_msg.getData())[0])
-                measure_enabled = (mode_val == self.MODE_MEASURE)
-                
+                mode_val = int(bytes(mode_msg.getData())[0]) if mode_msg else self.MODE_NOMEASURE
+   
                 print("MODE:", mode_val)
 
-                if not measure_enabled: 
-                    # no measurement this frame
+                if mode_val == self.MODE_PLANE:
+                    try:
+                        points, colors = pcl_msg.getPointsRGB()
+                    except Exception as e:
+                        print("MeasurementNode: getPointsRGB() failed:", e)
+                        #self._emit_result_min(pcl_msg, None, None)
+                        continue
+
+                    if points is None:
+                        print("AnnotationNode: Empty PCL points array.")
+                        #self._emit_result_min(pcl_msg, None, None)
+                        continue
+
+                    bgr = colors[:, :3]
+                    rgb = bgr[:, ::-1].astype(np.float64) / 255.0
+
+                    for pkt in imu_msg.packets:
+                        if hasattr(pkt, "acceleroMeter") and pkt.acceleroMeter is not None:
+                            acc = pkt.acceleroMeter  # IMUReportAccelerometer
+                            g_imu = np.array([acc.x, acc.y, acc.z], dtype=np.float64)
+                    self.pcl_measure.set_point_cloud_plane(points)
+                    plane, _, ok = self.pcl_measure.fit_plane(g_imu)
+                    if ok:
+                        self.pcl_measure.plane_eq = plane
+                        self.have_plane = True
+                        self.an_node.requestPlaneCapture(False)
+                        print("Plane set!")
+                    else:
+                        self.have_plane = False
+                        print("Plane fit failed.")
+                        time.sleep(0.005)
+                        self.an_node.requestPlaneCapture(True)
+                    continue
+
+                if mode_val != self.MODE_MEASURE:
+                    #self.reset_measurements()
                     continue
 
                 try:
@@ -193,44 +266,43 @@ class MeasurementNode(dai.node.ThreadedHostNode):
 
                 bgr = colors[:, :3]
                 rgb = bgr[:, ::-1].astype(np.float64) / 255.0
-                    
-                try:
-                    if self.measurement_mode == "obb":
-                        self.pcl_measure.set_point_cloud(points, rgb)
-                        self.pcl_measure.get_measurement_OBB()
 
-                        self._emit_overlay(
-                            pcl_msg,
-                            self.pcl_measure.obb_pts,
-                            self.pcl_measure.obb_edges
-                        )
+                if self.measurement_mode == "obb":
+                    self.pcl_measure.set_point_cloud(points, rgb)
+                    self.pcl_measure.get_measurement_OBB()
 
-                        self._emit_result_min(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
+                    self._emit_overlay(
+                        pcl_msg,
+                        self.pcl_measure.obb_pts,
+                        self.pcl_measure.obb_edges
+                    )
 
-                    elif self.measurement_mode == "heightgrid":
-                        if (not self.have_plane) or (self.pcl_measure.plane_eq is None):
-                            self.pcl_measure.set_point_cloud_plane(points)
-                            plane, _, ok = self.pcl_measure.fit_plane()
-                            if ok:
-                                self.pcl_measure.plane_eq = plane
-                                self.have_plane = True
-                                print("Plane set!")
-                            else:
-                                self.have_plane = False
-                                print("Plane fit failed.")
-                            self._emit_result_min(pcl_msg, None, None)
-                            continue
+                    self._emit_median(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
 
-                        self.pcl_measure.set_point_cloud(points, rgb)
-                        self.pcl_measure.get_measurement_groundHG()
-                        self._emit_overlay(
-                            pcl_msg,
-                            self.pcl_measure.corners3d  
-                        )
-                        self._emit_result_min(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
+                elif self.measurement_mode == "heightgrid":
+                        
+                    if not self.have_plane or self.pcl_measure.plane_eq is None:
+                        self.an_node.requestPlaneCapture(True)
+                        self._emit_result_min(pcl_msg, None, None)
+                        continue
 
-                except Exception as e:
-                    print(f"MeasurementNode: Error during processing PCL (Seq {pcl_msg.getSequenceNum()}): {e}")
-                    traceback.print_exc()
-                    continue
-                    #self._emit_result_min(pcl_msg, None, None)
+                    for pkt in imu_msg.packets:
+                        if hasattr(pkt, "acceleroMeter") and pkt.acceleroMeter is not None:
+                            acc = pkt.acceleroMeter  # IMUReportAccelerometer
+                            g_imu = np.array([acc.x, acc.y, acc.z], dtype=np.float64)
+
+                    if not self.pcl_measure.is_ground_plane(g_imu, self.pcl_measure.plane_eq):
+                        self.an_node.requestPlaneCapture(True)
+                        self.have_plane = False
+                        continue
+
+                    self.pcl_measure.set_point_cloud(points, rgb)
+                    self.pcl_measure.get_measurement_groundHG()
+                    self._emit_overlay(
+                        pcl_msg,
+                        self.pcl_measure.corners3d  
+                    )
+                        
+                    self._emit_median(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
+                
+                 

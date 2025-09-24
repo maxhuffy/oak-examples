@@ -10,8 +10,6 @@ from depthai_nodes.node import (
 
 from utils.helper_functions import (
     extract_text_embeddings,
-    extract_image_prompt_embeddings,
-    base64_to_cv2_image,
     read_intrinsics
 )
 
@@ -74,6 +72,13 @@ with dai.Pipeline(device) as pipeline:
         presetMode=dai.node.StereoDepth.PresetMode.DEFAULT,
     )
 
+    imu = pipeline.create(dai.node.IMU)
+    imu.enableIMUSensor(dai.IMUSensor.ACCELEROMETER_RAW, 100)
+    imu.setBatchReportThreshold(10)
+    imu.setMaxBatchReports(10)
+
+    calib = device.readCalibration()
+
     manip = pipeline.create(dai.node.ImageManip)
     manip.initialConfig.setOutputSize(model_w, model_h, dai.ImageManipConfig.ResizeMode.LETTERBOX)
     manip.initialConfig.setFrameType(frame_type)
@@ -122,13 +127,16 @@ with dai.Pipeline(device) as pipeline:
     # Measurement node 
     measurement_node = pipeline.create(MeasurementNode).build(
         rgbd_seg.pcl,
-        annotation_node.out_selection
+        annotation_node.out_selection,
+        imu.out
     )            
 
     measurement_node.out_result.link(annotation_node.in_meas_result)   
 
     fx, fy, cx, cy = read_intrinsics(device, 640, 400)
     measurement_node.setIntrinsics(fx, fy, cx, cy, imgW=640, imgH=400)  
+
+    measurement_node.an_node = annotation_node
 
     # Service functions for all functionalities of the frontend 
     def class_update_service(new_classes: list[str]):
@@ -172,6 +180,9 @@ with dai.Pipeline(device) as pipeline:
 
         annotation_node.setSelectionPoint(x, y)
         annotation_node.setKeepTopOnly(True)
+
+        measurement_node.reset_measurements()
+        annotation_node.clearCachedMeasurements()
         print(f"Selection point set to ({x:.3f}, {y:.3f})")
         return {"ok": True}
     
@@ -183,11 +194,12 @@ with dai.Pipeline(device) as pipeline:
         if method not in ("obb", "heightgrid"):
             return {"ok": False, "error": f"unknown method '{method}'"}
         measurement_node.measurement_mode = method
-        if method == "heightgrid" and not measurement_node.have_plane:
-            annotation_node.requestPlaneCaptureOnce(True)
+        if method == "heightgrid": #and not measurement_node.have_plane:
+            annotation_node.requestPlaneCapture(True)
             print("HeightGrid selected: requesting one-shot plane capture.")
         #if method == "obb" and measurement_node.have_plane:
             #measurement_node.reset_plane()
+        measurement_node.reset_measurements()
         print('method, have plane: ', method, measurement_node.have_plane)
         return {"ok": True, "method": method, "have_plane": measurement_node.have_plane}
     

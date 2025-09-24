@@ -25,7 +25,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
     
     MODE_NOSELECTION = 0
     MODE_MEASURE = 1
-    #MODE_PLANE_CAPTURE = 2
+    MODE_PLANE_CAPTURE = 2
     
     def __init__(self, label_encoding: Dict[int, str] = {}) -> None:
         dai.node.ThreadedHostNode.__init__(self)
@@ -48,7 +48,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
         self._src_trans = None
         self._dst_trans = None
 
-        self._plane_capture_once: bool = False
+        self._plane_capture: bool = False
 
         self._last_dims = None
         self._last_vol  = None
@@ -77,9 +77,17 @@ class AnnotationNode(dai.node.ThreadedHostNode):
         """If True, keep only the highest-confidence detection under the click."""
         self._keep_top_only = bool(keep_top)
 
-    def requestPlaneCaptureOnce(self, enable: bool = True) -> None:
+    def requestPlaneCapture(self, enable: bool = True) -> None:
         """Ask the node to emit exactly one cycle with FULL depth (mode=2)."""
-        self._plane_capture_once = bool(enable)
+        self._plane_capture = bool(enable)
+
+    def clearCachedMeasurements(self):
+        self._last_dims = None
+        self._last_vol = None
+
+        while True:
+            if not self.in_meas_result.tryGet():
+                break
     
     def build(
         self,
@@ -284,14 +292,14 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 detection.label_name = self._label_encoding.get(detection.label, "unknown")
 
             # Plane capture when switch to heightgrid
-            if self._plane_capture_once:
-                    self._send_mode(self.MODE_MEASURE, depth_msg) 
-                    #self._send_mode(self.MODE_PLANE_CAPTURE, depth_msg)
+            if self._plane_capture:
+                    #self._send_mode(self.MODE_MEASURE, depth_msg) 
+                    self._send_mode(self.MODE_PLANE_CAPTURE, depth_msg)
                     self.out_ann.send(AnnotationHelper().build(img_msg.getTimestamp(), img_msg.getSequenceNum()))
                     self.out_segm.send(rgbF)
                     self.out_segm_depth.send(depth_msg)                 # full-scene depth
                     #self._send_mode(self.MODE_MEASURE, img_msg)   
-                    self._plane_capture_once = False
+                    #self._plane_capture = False
                     continue
             
             m = det_msg.masks 
@@ -341,6 +349,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 self.out_segm_depth.send(depth_msg)
 
                 self.clearSelection()       # clear selected point 
+                self.clearCachedMeasurements()
 
                 continue
 

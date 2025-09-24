@@ -161,7 +161,7 @@ class PointCloudMeasurement:
 
         return points[mask], colors[mask]
     
-    def fit_plane(self) -> Tuple[Optional[np.ndarray], Optional[List[int]], bool]:
+    def fit_plane(self, g) -> Tuple[Optional[np.ndarray], Optional[List[int]], bool]:
         """
         Fits a plane to the point cloud using RANSAC.
 
@@ -179,12 +179,29 @@ class PointCloudMeasurement:
             return None, None, False
         
         inlier_ratio = len(plane_inliers) / len(self.point_cloud_plane.points)
-
-        if inlier_ratio >= 0.2:
-            return np.array(plane_eq), plane_inliers, True
+        print('inlier ratio: ', inlier_ratio)
+        if inlier_ratio >= 0.3:
+            if self.is_ground_plane(g, plane_eq):
+                return np.array(plane_eq), plane_inliers, True
+            else:
+                return None, None, False
 
         return None, None, False
-    
+        
+    def is_ground_plane(self, g, plane_eq):
+        """ 
+        Checks if the plane represents the ground using the gravity vector from the IMU.
+        If the plane is the ground, the normal of the plane and the gravity vector should be parallel.
+        """
+        n = plane_eq[:3]
+        n = n / np.linalg.norm(n)
+        g = g / np.linalg.norm(g)
+        dot_product = np.dot(n, g)
+        theta_max_deg = 10.0
+        thr = -np.cos(np.deg2rad(theta_max_deg))
+        ok = (np.dot(n/np.linalg.norm(n), g/np.linalg.norm(g)) <= thr)
+        return ok
+
     def clear_plane(self):
         self.plane_eq = None
         self.R_w2t = None
@@ -423,8 +440,8 @@ class PointCloudMeasurement:
 
         self.get_obb_wire()
 
-        print('Dimensions [cm]: ', self.dimensions)
-        print('Volume [cm3]: ', self.volume)
+        #print('Dimensions [cm]: ', self.dimensions)
+        #print('Volume [cm3]: ', self.volume)
 
     def get_measurement_groundHG(self):
 
@@ -449,8 +466,8 @@ class PointCloudMeasurement:
             self.get_3d_corners_groundHG(rect_xy, self.z_base, H)
 
 
-            print('Dimensions [cm]: ', self.dimensions)
-            print('Volume [cm3]: ', self.volume)
+            #print('Dimensions [cm]: ', self.dimensions)
+            #print('Volume [cm3]: ', self.volume)
         else:
             print('Ground plane not set!')
     
