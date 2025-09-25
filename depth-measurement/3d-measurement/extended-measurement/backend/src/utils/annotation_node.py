@@ -348,7 +348,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 self.out_segm.send(rgbF)
                 self.out_segm_depth.send(depth_msg)
 
-                self.clearSelection()       # clear selected point 
+                self.clearSelection()       
                 self.clearCachedMeasurements()
 
                 continue
@@ -387,8 +387,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
 
                 self._draw_rotrect_and_label(helper, d0, label_txt)
 
-                # warp to RGB space and mask depth
-
+                # Mask depth to get segmented pointcloud
                 keep = (mask_rgb == selected_mid)
                 depth_u16 = np.ascontiguousarray(depth_map, dtype=np.uint16)
                 depth_u16[~keep] = 0
@@ -408,7 +407,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 self.out_segm_depth.send(depthF)
                 continue
 
-            # fallback: no valid instance under click → show all (signal NOSELECTION)
+            # No valid instance under click - show all (signal NOSELECTION)
             if m is not None and m.size:
                 present_ids = set(int(v) for v in np.unique(m) if v >= 0)
                 for idx in present_ids:

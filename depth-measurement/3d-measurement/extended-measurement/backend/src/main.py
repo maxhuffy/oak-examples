@@ -77,8 +77,6 @@ with dai.Pipeline(device) as pipeline:
     imu.setBatchReportThreshold(10)
     imu.setMaxBatchReports(10)
 
-    calib = device.readCalibration()
-
     manip = pipeline.create(dai.node.ImageManip)
     manip.initialConfig.setOutputSize(model_w, model_h, dai.ImageManipConfig.ResizeMode.LETTERBOX)
     manip.initialConfig.setFrameType(frame_type)
@@ -194,26 +192,25 @@ with dai.Pipeline(device) as pipeline:
         if method not in ("obb", "heightgrid"):
             return {"ok": False, "error": f"unknown method '{method}'"}
         measurement_node.measurement_mode = method
-        if method == "heightgrid": #and not measurement_node.have_plane:
+        if method == "heightgrid": 
             annotation_node.requestPlaneCapture(True)
-            print("HeightGrid selected: requesting one-shot plane capture.")
-        #if method == "obb" and measurement_node.have_plane:
-            #measurement_node.reset_plane()
+        else:
+            annotation_node.requestPlaneCapture(False)
         measurement_node.reset_measurements()
-        print('method, have plane: ', method, measurement_node.have_plane)
+        print('Selected method: ', method)
         return {"ok": True, "method": method, "have_plane": measurement_node.have_plane}
     
     # This is how we connect the services in the frontend to functions in the backend!
     visualizer.registerService("Selection Service", selection_service)
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService("Threshold Update Service", conf_threshold_update_service)
-
     visualizer.registerService("Measurement Method Service", measurement_method_service)
 
     visualizer.addTopic("Video", cam_out, "images")
     visualizer.addTopic("Detections", annotation_node.out_ann)
     visualizer.addTopic("Pointclouds", rgbd_seg.pcl, "point_clouds")
     visualizer.addTopic("Measurement Overlay", measurement_node.out_ann)
+    visualizer.addTopic("Plane Status", measurement_node.out_plane_status)
 
     print("Pipeline created.")
 

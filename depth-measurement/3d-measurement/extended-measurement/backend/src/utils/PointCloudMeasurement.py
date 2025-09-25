@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional
 
 class PointCloudMeasurement:
     '''
-    A class to measure volume and dimenisons of object pointclouds
+    A class to measure volume and dimensions of object pointclouds
     '''
 
     def __init__(self):
@@ -13,6 +13,7 @@ class PointCloudMeasurement:
         self.distance_thr = 10
         self.sample_points = 3
         self.max_iterations = 500
+        self.ransac_inlier_ratio_thr = 0.17
 
         self.voxel_size = 5
         self.points_buffer: np.ndarray = np.empty((0, 3), dtype=np.float64)
@@ -26,7 +27,6 @@ class PointCloudMeasurement:
         self.fill_iters = 1
         self.z_base = 10.0
         self.plane_eq = None
-        self.plane_points = None
         self.center = None
 
         self.volume = None
@@ -82,7 +82,6 @@ class PointCloudMeasurement:
             pcl_points (np.ndarray): The 3D points of the point cloud.
             colors (np.ndarray, optional): The colors corresponding to the points. Defaults to None.
         """
-        #print('shape object: ', pcl_points.shape)
         self.update_point_cloud(pcl_points)
         if colors is not None and colors.size > 0:
             self.point_cloud.colors = o3d.utility.Vector3dVector(colors)
@@ -95,11 +94,7 @@ class PointCloudMeasurement:
         self.point_cloud.colors = o3d.utility.Vector3dVector(filtered_colors)
         self.point_cloud.points = o3d.utility.Vector3dVector(filtered_points)
 
-        #print('shape object after filtering: ', filtered_points.shape)
-
     def set_point_cloud_plane(self, pcl_points: np.ndarray):
-
-        #print('shape plane: ', pcl_points.shape)
         self.update_point_cloud_plane(pcl_points)
         self.filter_point_cloud_plane()
 
@@ -126,9 +121,6 @@ class PointCloudMeasurement:
         eps = 1e-6     
         mask = points[:, 2] > eps
         self.point_cloud_plane = self.point_cloud_plane.select_by_index(np.where(mask)[0])
-
-        #print('shape plane after filtering: ', np.array(self.point_cloud_plane.points).shape)
-    
     
     def MAD_filtering(self, pcl: o3d.geometry.PointCloud, k: int = 3):
         """
@@ -159,7 +151,10 @@ class PointCloudMeasurement:
         else:
             mask = np.abs(distances - median_distance) < k * mad
 
-        return points[mask], colors[mask]
+        if colors.shape[0] == points.shape[0] and colors.shape[1] == 3:
+            return points[mask], colors[mask]
+        else:
+            return points[mask], np.empty((np.count_nonzero(mask), 3))
     
     def fit_plane(self, g) -> Tuple[Optional[np.ndarray], Optional[List[int]], bool]:
         """
@@ -179,13 +174,10 @@ class PointCloudMeasurement:
             return None, None, False
         
         inlier_ratio = len(plane_inliers) / len(self.point_cloud_plane.points)
-        print('inlier ratio: ', inlier_ratio)
-        if inlier_ratio >= 0.3:
+        #print('inlier ratio: ', inlier_ratio)
+        if inlier_ratio >= self.ransac_inlier_ratio_thr:
             if self.is_ground_plane(g, plane_eq):
                 return np.array(plane_eq), plane_inliers, True
-            else:
-                return None, None, False
-
         return None, None, False
         
     def is_ground_plane(self, g, plane_eq):
@@ -196,7 +188,6 @@ class PointCloudMeasurement:
         n = plane_eq[:3]
         n = n / np.linalg.norm(n)
         g = g / np.linalg.norm(g)
-        dot_product = np.dot(n, g)
         theta_max_deg = 10.0
         thr = -np.cos(np.deg2rad(theta_max_deg))
         ok = (np.dot(n/np.linalg.norm(n), g/np.linalg.norm(g)) <= thr)
@@ -214,7 +205,6 @@ class PointCloudMeasurement:
             raise ValueError("Bad plane_eq (must be 4 finite coeffs)")
 
         a, b, c, d = peq
-        #print('plane equation: ', peq)
         n = np.array([a, b, c], dtype=np.float64)
         g = np.linalg.norm(n)
         if not np.isfinite(g) or g == 0.0:
@@ -274,7 +264,6 @@ class PointCloudMeasurement:
             C = np.asarray(self.point_cloud.colors, dtype=np.float64)
             if C.shape[0] == P.shape[0] and C.shape[1] == 3 and np.all(np.isfinite(C)):
                 pc_tf.colors = o3d.utility.Vector3dVector(np.ascontiguousarray(C))
-            # else: silently skip colors if mismatched
 
         self.point_cloud_tf = pc_tf
         self.R_w2t = R
@@ -283,27 +272,11 @@ class PointCloudMeasurement:
     
     def size_from_table_frame(self):
         pts = np.asarray(self.point_cloud_tf.points)
-        H = float(np.percentile(pts[:,2], 98)) - 10.0  # robust height
-        #L, W, rect_xy = self.obb2d_from_xy(pts[:, :2])
+        H = float(np.percentile(pts[:,2], 98)) - 10.0 
         L, W, rect_xy = self.min_area_rect_from_points(pts[:, :2])
         return L, W, H, rect_xy
     
-    def obb2d_from_xy(self, xy: np.ndarray):
-        mu = xy.mean(axis=0)
-        X = xy - mu
-        _, _, Vt = np.linalg.svd(X, full_matrices=False)
-        R2 = Vt.T
-        Y = X @ R2
-        mn, mx = Y.min(axis=0), Y.max(axis=0)
-        ext = mx - mn
-        order = np.argsort(ext)[::-1]
-        ext, R2, mn, mx = ext[order], R2[:, order], mn[order], mx[order]
-        rect_p = np.array([[mn[0], mn[1]],[mx[0], mn[1]],[mx[0], mx[1]],[mn[0], mx[1]]])
-        corners_xy = rect_p @ R2.T + mu
-        return float(ext[0]), float(ext[1]), corners_xy
-    
     def convex_hull_2d(self, xy: np.ndarray):
-        # Andrew’s monotone chain (NumPy only)
         pts = np.unique(xy, axis=0)
         pts = pts[np.lexsort((pts[:,1], pts[:,0]))]
         def cross(o,a,b): return (a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0])
@@ -434,40 +407,25 @@ class PointCloudMeasurement:
     def get_measurement_OBB(self):
 
         self.obb = self.point_cloud.get_minimal_oriented_bounding_box()
+        self.get_obb_wire()
 
         self.dimensions = self.obb.extent/10.0
         self.volume = float(self.obb.volume())/1000.0
-
-        self.get_obb_wire()
-
-        #print('Dimensions [cm]: ', self.dimensions)
-        #print('Volume [cm3]: ', self.volume)
 
     def get_measurement_groundHG(self):
 
         if self.plane_eq is not None:
 
             #print('Plane eq: ', self.plane_eq)
-            
-            #print(np.array(self.point_cloud.points).shape)
             self.center = np.asarray(self.point_cloud.points).mean(axis=0)
-            #print(self.center)
             R, t = self.to_table_frame()
-            #print('Calculated transform')
             L, W, H, rect_xy = self.size_from_table_frame()
-            #print('Calculated dimensions')
-            
             G = self.make_height_surface_grid(rect_xy)
-            #print('Calculated height grid')
+            self.get_3d_corners_groundHG(rect_xy, self.z_base, H)
 
             self.dimensions = np.array([L, W, H], dtype=float)/10.0
             self.volume = self.volume_from_height_grid(G)/1000.0
 
-            self.get_3d_corners_groundHG(rect_xy, self.z_base, H)
-
-
-            #print('Dimensions [cm]: ', self.dimensions)
-            #print('Volume [cm3]: ', self.volume)
         else:
             print('Ground plane not set!')
     
