@@ -3,10 +3,11 @@ import cv2
 from typing import List, Tuple, Optional
 
 class DistanceCalculator:
-    def __init__(self, camera_matrix: np.ndarray):
+    def __init__(self, camera_matrix: np.ndarray, measurement_history_length: int = 20):
         self.camera_matrix = camera_matrix
         self.show_confidence_interval = False
         self.distances = []
+        self.measurement_history_length = measurement_history_length
         
     def calculate_distance(self, points: List[dict], depth_frame: np.ndarray) -> Tuple[float, float]:
         """
@@ -68,11 +69,14 @@ class DistanceCalculator:
         # Store for statistics
         if distance > 0:
             self.distances.append(distance)
+        if len(self.distances) > self.measurement_history_length:
+            self.distances = self.distances[1:]
             
         # Calculate standard deviation if we have multiple measurements
         std_dev = np.std(self.distances) if len(self.distances) > 1 else 0
+        distance_median = np.median(self.distances) if len(self.distances) > 0 else 0
         
-        return distance, std_dev
+        return distance_median, std_dev
     
     def clear_distances(self):
         """Clear stored distance measurements"""
