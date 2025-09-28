@@ -45,15 +45,17 @@ def custom_snap_process(
     dets_labels_str = [label_map[det.label] for det in detections]
     dets_confs = [det.confidence for det in detections]
 
-    extra_data = {
+    extras = {
         "model": model,
         "detection_xyxy": str(dets_xyxy),
         "detection_label": str(dets_labels),
         "detection_label_str": str(dets_labels_str),
         "detection_confidence": str(dets_confs),
     }
+
+    file_group = [dai.FileData(frame, "rgb"), dai.FileData(det_data, "detections")]
     if producer.sendSnap(
-        name="rgb", frame=frame, data=[], tags=["demo"], extra_data=extra_data
+        name="rgb", file_group=file_group, tags=["demo"], extras=extras
     ):
         print("Snap sent!")
 
@@ -106,8 +108,8 @@ with dai.Pipeline(device) as pipeline:
     )
 
     snaps_producer = pipeline.create(SnapsProducer).build(
-        nn_with_parser.passthrough,
-        det_process_filter.out,
+        frame=nn_with_parser.passthrough,
+        msg=det_process_filter.out,
         time_interval=args.time_interval,
         process_fn=partial(
             custom_snap_process,
@@ -115,6 +117,7 @@ with dai.Pipeline(device) as pipeline:
             model=nn_archive.getConfigV1().model.metadata.name,
         ),
     )
+    snaps_producer.setUrl("https://events.cloud-stg.luxonis.com")  # TODO: Remove
 
     visualizer.addTopic("Video", nn_with_parser.passthrough, "images")
     visualizer.addTopic("Visualizations", det_process_filter.out, "images")
