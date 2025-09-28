@@ -5,11 +5,12 @@ interface DistanceDisplayProps {
     distance: number | null;
     stdDeviation?: number | null;
     pointCount?: number;
+    hasInvalidDepth?: boolean;
     trackingEnabled?: boolean;
     onToggleTracking?: () => void;
 }
 
-export function DistanceDisplay({ distance, stdDeviation, pointCount = 0, trackingEnabled = true, onToggleTracking }: DistanceDisplayProps) {
+export function DistanceDisplay({ distance, stdDeviation, pointCount = 0, hasInvalidDepth = false, trackingEnabled = true, onToggleTracking }: DistanceDisplayProps) {
     const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
     const [rounding, setRounding] = useState<1 | 2 | 3 | 4>(3);
     
@@ -156,6 +157,24 @@ export function DistanceDisplay({ distance, stdDeviation, pointCount = 0, tracki
                             </span>
                         )}
                     </div>
+                    {hasInvalidDepth && (
+                        <div className={css({ 
+                            fontSize: 'sm',
+                            color: 'red.600',
+                            backgroundColor: 'red.50',
+                            padding: 'xs',
+                            borderRadius: 'sm',
+                            border: '1px solid',
+                            borderColor: 'red.200',
+                            marginBottom: 'xs',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'xs'
+                        })}>
+                            <span>⚠️</span>
+                            <span>Invalid depth detected - try selecting different points</span>
+                        </div>
+                    )}
                     <div className={css({ 
                         fontSize: 'sm',
                         color: 'gray.600'
@@ -172,6 +191,24 @@ export function DistanceDisplay({ distance, stdDeviation, pointCount = 0, tracki
                     })}>
                         ⏳ Calculating distance...
                     </div>
+                    {hasInvalidDepth && (
+                        <div className={css({ 
+                            fontSize: 'sm',
+                            color: 'red.600',
+                            backgroundColor: 'red.50',
+                            padding: 'xs',
+                            borderRadius: 'sm',
+                            border: '1px solid',
+                            borderColor: 'red.200',
+                            marginBottom: 'xs',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'xs'
+                        })}>
+                            <span>⚠️</span>
+                            <span>Invalid depth detected - try selecting different points</span>
+                        </div>
+                    )}
                     <div className={css({ 
                         fontSize: 'sm',
                         color: 'gray.600'

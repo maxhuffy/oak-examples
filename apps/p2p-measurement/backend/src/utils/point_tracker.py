@@ -265,6 +265,7 @@ class PointTracker(dai.node.HostNode):
         self.points.clear()
         self.latest_distance = None
         self.latest_std_dev = None
+        self.has_invalid_depth = False
         if self.distance_calculator:
             self.distance_calculator.clear_distances()
             
@@ -272,7 +273,8 @@ class PointTracker(dai.node.HostNode):
         return {
             'distance': self.latest_distance,
             'std_deviation': self.latest_std_dev,
-            'point_count': len(self.points)
+            'point_count': len(self.points),
+            'has_invalid_depth': self.has_invalid_depth
         }
         
     def calculate_distance_3d(self, p1: Point, p2: Point, depth_frame: np.ndarray) -> Tuple[float, bool]:
@@ -288,6 +290,7 @@ class PointTracker(dai.node.HostNode):
         
         if depth1 == 0 or depth2 == 0:
             print("Depth is 0")
+            self.has_invalid_depth = True
             return -1.0, False
             
         depth1_m = depth1 / 1000.0
@@ -400,11 +403,13 @@ class PointTracker(dai.node.HostNode):
                     if distance > 0:
                         self.latest_distance = distance
                         self.latest_std_dev = std_dev
+                        self.has_invalid_depth = False
                         
                 pass
             else:
                 self.latest_distance = None
                 self.latest_std_dev = None
+                self.has_invalid_depth = False
                         
         except Exception as e:
             pass

@@ -10,6 +10,7 @@ function App() {
     const [pointCount, setPointCount] = useState(0);
     const [currentDistance, setCurrentDistance] = useState<number | null>(null);
     const [currentStdDeviation, setCurrentStdDeviation] = useState<number | null>(null);
+    const [hasInvalidDepth, setHasInvalidDepth] = useState(false);
     const [trackingEnabled, setTrackingEnabled] = useState(true);
     const [showInstructions, setShowInstructions] = useState(false);
 
@@ -20,6 +21,7 @@ function App() {
         setPointCount(0);
         setCurrentDistance(null);
         setCurrentStdDeviation(null);
+        setHasInvalidDepth(false);
     };
 
     const toggleTracking = () => {
@@ -69,9 +71,11 @@ function App() {
                                 if (parsedResponse?.ok && parsedResponse.distance !== null && typeof parsedResponse.distance === 'number') {
                                     setCurrentDistance(parsedResponse.distance);
                                     setCurrentStdDeviation(parsedResponse.std_deviation || null);
+                                    setHasInvalidDepth(parsedResponse.has_invalid_depth || false);
                                 } else if (parsedResponse?.ok && parsedResponse.distance === null) {
                                     setCurrentDistance(null);
                                     setCurrentStdDeviation(null);
+                                    setHasInvalidDepth(parsedResponse.has_invalid_depth || false);
                                 }
                             } catch (e) {
                                 console.error('Error parsing distance service response:', e);
@@ -229,6 +233,7 @@ function App() {
                             <li>Click on the video or depth stream to select the first point</li>
                             <li>Click again to select the second point</li>
                             <li>The distance will be calculated and displayed</li>
+                            <li><strong>Wait a moment</strong> for the measurement to stabilize</li>
                             <li>Press <strong>Space</strong> or right-click to clear points and reset</li>
                             <li>Switch between Video and Depth views using the tabs</li>
                         </ol>
@@ -240,6 +245,7 @@ function App() {
                     distance={currentDistance} 
                     stdDeviation={currentStdDeviation}
                     pointCount={pointCount}
+                    hasInvalidDepth={hasInvalidDepth}
                     trackingEnabled={trackingEnabled}
                     onToggleTracking={toggleTracking}
                 />

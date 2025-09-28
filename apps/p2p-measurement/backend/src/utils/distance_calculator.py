@@ -1,6 +1,6 @@
 import numpy as np
-import cv2
-from typing import List, Tuple, Optional
+from typing import List, Tuple
+
 
 class DistanceCalculator:
     def __init__(self, camera_matrix: np.ndarray, measurement_history_length: int = 20):
