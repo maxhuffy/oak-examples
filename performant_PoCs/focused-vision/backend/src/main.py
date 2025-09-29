@@ -13,6 +13,7 @@ from utils.letterbox_unmap_crop_node import UnletterboxDetectionsNode
 
 _, args = initialize_argparser()
 
+HIGH_RES_WIDTH, HIGH_RES_HEIGHT = 1920*2, 1080*2
 INPUT_WIDTH, INPUT_HEIGHT = 1920, 1080
 STAGE_1_MODEL = "luxonis/yunet:320x240"
 STAGE_2_MODEL = "luxonis/eye-detection:512x512"
@@ -24,7 +25,7 @@ platform = device.getPlatform().name
 frame_type = dai.ImgFrame.Type.BGR888i if platform == "RVC4" else dai.ImgFrame.Type.BGR888p
 
 if not args.fps_limit:
-    args.fps_limit = 8 if platform == "RVC2" else 30
+    args.fps_limit = 8 if platform == "RVC2" else 15
 
 
 def convert_to_nv12(original_video, width, height):
@@ -63,6 +64,7 @@ with dai.Pipeline(device) as pipeline:
     else:
         cam = pipeline.create(dai.node.Camera).build()
         cam_out = cam.requestOutput(size=(INPUT_WIDTH, INPUT_HEIGHT), type=frame_type, fps=args.fps_limit)
+        high_res_out = cam.requestOutput(size=(HIGH_RES_WIDTH, HIGH_RES_HEIGHT), type=frame_type, fps=args.fps_limit)
         input_node = cam_out
 
         out_NV12 = cam.requestOutput(size=(INPUT_WIDTH, INPUT_HEIGHT), type=dai.ImgFrame.Type.NV12, fps=args.fps_limit)
@@ -102,7 +104,7 @@ with dai.Pipeline(device) as pipeline:
 
     non_focused_remapped.out.link(eye_script_non_focused.inputs["det_in"])
 
-    input_node.link(eye_script_non_focused.inputs["preview"])
+    high_res_out.link(eye_script_non_focused.inputs["preview"])
 
     eye_crop_non_focused = pipeline.create(dai.node.ImageManip)
     eye_crop_non_focused.setMaxOutputFrameSize(512 * 512 * 3)
@@ -204,7 +206,7 @@ with dai.Pipeline(device) as pipeline:
 
     fullframe_remap_bridge.out.link(eye_script_focused.inputs["det_in"])
 
-    input_node.link(eye_script_focused.inputs["preview"])
+    high_res_out.link(eye_script_focused.inputs["preview"])
 
     eye_crop_stage_2 = pipeline.create(dai.node.ImageManip)
     eye_crop_stage_2.setMaxOutputFrameSize(512 * 512 * 3)
