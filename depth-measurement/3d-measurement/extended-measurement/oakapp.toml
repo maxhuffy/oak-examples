@@ -1,4 +1,4 @@
-identifier = "Extended-3D-Measurement"
+identifier = "luxonis.com.extended-3d-measurement"
 entrypoint = ["bash", "-c", "/usr/bin/runsvdir -P /etc/service"]
 app_version = "0.9.0"
 
