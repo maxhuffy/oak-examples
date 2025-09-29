@@ -358,8 +358,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 mask_rgb = self._mask_nn_to_rgb(m)
 
             # keep only the chosen detection
-            det_msg.detections = [dets[kept_idx[0]]]
-
+            sel_i = kept_idx[0]
             selected_mid = -1
 
             # pick the mask instance id under the click
@@ -370,22 +369,26 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 selected_mid = int(mask_rgb[py, px]) if mask_rgb is not None and mask_rgb.size else -1
 
             if m is not None and selected_mid != -1:
-                # draw ONLY the selected mask + its box/label (overlays are NN-normalized)
-                self._draw_mask(helper, m, selected_mid)
+                # draw the masks of every detection, measurements only for the selected one 
+                present_ids = set(int(v) for v in np.unique(m) if v >= 0)
+                for idx in present_ids:
+                    self._draw_mask(helper, m, idx)
 
                 self._poll_measurement_result()
-                d0 = det_msg.detections[0]
 
-                base = f"{d0.label_name} {getattr(d0, 'confidence', 0.0):.2f}"
-                extra = ""
-                if isinstance(self._last_dims, list) and len(self._last_dims) == 3:
-                    extra += f"\n{self._last_dims[0]:.2f} × {self._last_dims[1]:.2f} × {self._last_dims[2]:.2f} cm"
-                if isinstance(self._last_vol, (int, float)):
-                    extra += f"\n{self._last_vol:.2f} cm³"
-
-                label_txt = base + extra
-
-                self._draw_rotrect_and_label(helper, d0, label_txt)
+                for i, d in enumerate(dets):
+                    if i == sel_i:
+                        base = f"{d.label_name} {getattr(d, 'confidence', 0.0):.2f}"
+                        extra = ""
+                        if isinstance(self._last_dims, list) and len(self._last_dims) == 3:
+                            extra += f"\n{self._last_dims[0]:.1f} × {self._last_dims[1]:.1f} × {self._last_dims[2]:.1f} cm"
+                        if isinstance(self._last_vol, (int, float)):
+                            extra += f"\n{int(np.rint(float(self._last_vol)))} cm³"
+                        label_txt = base + extra
+                        self._draw_rotrect_and_label(helper, d, label_txt)
+                        continue
+                    base = f"{d.label_name} {getattr(d, 'confidence', 0.0):.2f}"
+                    self._draw_rotrect_and_label(helper, d, base)
 
                 # Mask depth to get segmented pointcloud
                 keep = (mask_rgb == selected_mid)
@@ -421,5 +424,3 @@ class AnnotationNode(dai.node.ThreadedHostNode):
             self.out_ann.send(ann_msg)
             self.out_segm.send(rgbF)
             self.out_segm_depth.send(depth_msg)
-
-            

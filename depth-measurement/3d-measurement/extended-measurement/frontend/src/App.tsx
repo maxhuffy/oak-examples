@@ -6,100 +6,79 @@ import { ClassSelector } from "./ClassSelector.tsx";
 import { useRef } from "react";
 import { MeasurementMethodSelector } from "./MeasurementMethodSelector";
 import { Button } from "@luxonis/common-fe-components";
+import { TopBar } from "./TopBar.tsx";
 
 function App() {
-    const connection = useConnection();
+  const connection = useConnection();
+  const viewerRef = useRef<HTMLDivElement>(null);
 
-    const viewerRef = useRef<HTMLDivElement>(null);
+  const clearSelection = () => {
+    (connection as any)?.daiConnection?.postToService("Selection Service", { clear: true });
+  };
 
-    const selectionService = "Selection Service";
+  return (
+    <main
+      className={css({
+        width: "screen",
+        height: "screen",
+        display: "flex",
+        flexDirection: "row",
+        gap: "md",
+        padding: "md",
+      })}
+    >
+      <div
+        className={css({
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          minHeight: 0,
+          borderRadius: "md",
+          overflow: "hidden",
+          borderWidth: "1px",
+          borderColor: "gray.300",
+          backgroundColor: "white",
+        })}
+      >
+        <TopBar />
 
-    const clearSelection = () => {
-    (connection as any)?.daiConnection?.postToService(selectionService, { clear: true });
-    };
-
-    return (
-        <main className={css({
-            width: 'screen',
-            height: 'screen',
-            display: 'flex',
-            flexDirection: 'row',
-            gap: 'md',
-            padding: 'md'
-        })}>
-            {/* Left: Stream Viewer */}
-            <div ref={viewerRef} className={css({ flex: 1, position: "relative" })}>
-            <Streams
-                // pre-open both panels (works after you clear saved selection once)
-                defaultTopics={["Video", "Pointclouds"]}
-                // optional: limit the picker to just these 2 groups (type wants strings, not booleans)
-                topicGroups={{ images: "Images", point_clouds: "Pointclouds" }}
-            />
-            <ClickCatcher
+        <div ref={viewerRef} className={css({ position: "relative", flex: 1, minHeight: 0 })}>
+          <Streams
+            defaultTopics={["Video", "Pointclouds"]}
+            topicGroups={{ images: "Images", point_clouds: "Pointclouds" }}
+          />
+          <ClickCatcher
             containerRef={viewerRef}
             frameWidth={640}
             frameHeight={400}
             debug
-            allowedPanelTitle="Video" // or "[aria-label='Images']"
-            />
-            </div>
+            allowedPanelTitle="Video"
+          />
+        </div>
+      </div>
 
+      <div className={css({ width: "2px", backgroundColor: "gray.300" })} />
 
-            {/* Vertical Divider */}
-            <div className={css({
-                width: '2px',
-                backgroundColor: 'gray.300'
-            })} />
-
-            {/* Right: Sidebar (Info and Controls) */}
-            <div className={css({
-                width: 'md',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'md'
-            })}>
-                <h1 className={css({ fontSize: 'xl', fontWeight: 'bold' })}>
-                    Extended 3D Measurement Application
-                </h1>
-                <p>
-                    This example combines a YOLOE segmentation model with DepthAI point clouds to measure real-world objects in 3D.
-                    Click any detected object in the Video panel to segment it and get its dimensions and volume.
-                </p>
-
-                <ClassSelector />
-
-                {/* Confidence Slider */}
-                <ConfidenceSlider initialValue={0.3} />
-
-                <Button
-                onClick={clearSelection}         
-                alignSelf="start"
-                title="Removes the current segmented object. Keeps classes and settings."
-                >
-                Clear selected object
-                </Button>
-
-                <MeasurementMethodSelector />
-
-                {/* Connection Status */}
-                <div className={css({
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'xs',
-                    marginTop: 'auto',
-                    color: connection.connected ? 'green.500' : 'red.500'
-                })}>
-                    <div className={css({
-                        width: '3',
-                        height: '3',
-                        borderRadius: 'full',
-                        backgroundColor: connection.connected ? 'green.500' : 'red.500'
-                    })} />
-                    <span>{connection.connected ? 'Connected to device' : 'Disconnected'}</span>
-                </div>
-            </div>
-        </main>
-    );
+      <div className={css({ width: "md", display: "flex", flexDirection: "column", gap: "md" })}>
+        <h1 className={css({ fontSize: "xl", fontWeight: "bold" })}>Extended 3D Measurement Application</h1>
+        <p>
+            This example combines a YOLOE segmentation model with DepthAI point clouds to measure real-world objects in 3D.
+            Click any detected object in the Video panel to segment it and get its dimensions and volume.
+        </p>
+        <ClassSelector />
+        <ConfidenceSlider initialValue={0.2} />
+        <Button onClick={clearSelection} alignSelf="start">Clear selected object</Button>
+        <MeasurementMethodSelector />
+        <div className={css({ display: "flex", alignItems: "center", gap: "xs", marginTop: "auto",
+          color: connection.connected ? "green.500" : "red.500" })}>
+          <div className={css({ width: "3", height: "3", borderRadius: "full",
+            backgroundColor: connection.connected ? "green.500" : "red.500" })}/>
+          <span>{connection.connected ? "Connected to device" : "Disconnected"}</span>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 export default App;

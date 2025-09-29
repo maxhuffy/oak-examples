@@ -292,6 +292,8 @@ class MeasurementNode(dai.node.ThreadedHostNode):
                     continue
 
                 if mode_val != self.MODE_MEASURE:
+                    if self.measurement_mode == "heightgrid" and self.have_plane:
+                        self._emit_plane_status(pcl_msg, 'ok')
                     continue
 
                 bgr = colors[:, :3]
@@ -324,6 +326,7 @@ class MeasurementNode(dai.node.ThreadedHostNode):
 
                     self._emit_overlay(pcl_msg, self.pcl_measure.corners3d)
                     self._emit_median(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
+                    self._emit_plane_status(pcl_msg, 'ok')
 
             if not (read_any or processed):
                 time.sleep(0.002) 

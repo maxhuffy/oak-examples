@@ -428,10 +428,3 @@ class PointCloudMeasurement:
 
         else:
             print('Ground plane not set!')
-    
-
-
-
-
-        
-        
