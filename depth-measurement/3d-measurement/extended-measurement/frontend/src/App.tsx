@@ -67,7 +67,7 @@ function App() {
             Click any detected object in the Video panel to segment it and get its dimensions and volume.
         </p>
         <ClassSelector />
-        <ConfidenceSlider initialValue={0.2} />
+        <ConfidenceSlider initialValue={0.15} />
         <Button onClick={clearSelection} alignSelf="start">Clear selected object</Button>
         <MeasurementMethodSelector />
         <div className={css({ display: "flex", alignItems: "center", gap: "xs", marginTop: "auto",
