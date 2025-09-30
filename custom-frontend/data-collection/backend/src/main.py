@@ -178,6 +178,7 @@ with dai.Pipeline(device) as pipeline:
         ),
     )
     snaps_producer.setUrl("https://events.cloud-stg.luxonis.com")  # TODO: Remove
+    snaps_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
     print("Snaps producer API KEY:", os.getenv("DEPTHAI_HUB_API_KEY"))
 
     def update_labels(label_names: list[str], offset: int = 0):

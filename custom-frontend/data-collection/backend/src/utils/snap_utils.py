@@ -32,7 +32,7 @@ def custom_snap_process(
         dets_xyxy = [(det.xmin, det.ymin, det.xmax, det.ymax) for det in detections]
         extras["detection_xyxy"] = str(dets_xyxy)
 
-        file_group.append(dai.FileData(det_data, "detections"))
+        # file_group.append(dai.FileData(det_data, "detections"))
 
     elif isinstance(det_data, ImgDetectionsExtended):
         dets_labels_str = [det.label_name for det in detections]
@@ -50,11 +50,9 @@ def custom_snap_process(
         raise NotImplementedError
 
     extras["detection_label_str"] = str(dets_labels_str)
+    extras = {"model": model}
 
-    # if producer.sendSnap(
-    #     name="rgb", file_group=file_group, tags=["demo"], extras=extras
-    # ):
-    #     print("Snap sent!")
-
-    if producer.sendSnap(name="rgb", file_group=file_group, tags=["demo"]):
+    if producer.sendSnap(
+        name="rgb", file_group=file_group, tags=["demo"], extras=extras
+    ):
         print("Snap sent!")

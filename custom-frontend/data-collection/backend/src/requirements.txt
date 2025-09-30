@@ -1,7 +1,7 @@
 # depthai==3.0.0
 --extra-index-url https://artifacts.luxonis.com/artifactory/luxonis-python-snapshot-local
 --pre
-depthai==3.0.0.dev0+c74b28c8e4ccdc9869fbfa99d73b95ac0893249e
+depthai==3.0.0.dev0+3aa210a2d54c32e0f75f8ac6b4a81f80b6230f2f
 #depthai-nodes==0.3.4
 depthai-nodes @ git+https://github.com/luxonis/depthai-nodes.git@feat/dai_dev_req
 opencv-python-headless~=4.10.0
