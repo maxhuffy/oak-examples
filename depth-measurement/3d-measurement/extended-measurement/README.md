@@ -39,7 +39,8 @@ This method is fast but may overestimate volume for objects with irregular shape
 #### 2. Ground-plane Height Grid (HG)
 For this method the objects are required to rest on a flat surface (e.g desk or floor). It uses the flat surface as a reference support plane, then estimates the footprint and the height by 
 grid-based slicing of the objects top surface.  
-How it works:
+
+**How it works:**
 1. Plane capture: we run RANSAC on the scene point cloud and validate with the IMU that the plane is ground-like (plane normal parallel to gravity). 
 	The app shows Calculating / OK / Failed status in the overlay of the Video Stream and re-requests capture if the camera has been moved or plane becomes invalid.
 2. Transform the object point cloud into the ground/table frame.
@@ -50,7 +51,7 @@ The total object volume is obtained by summing the volumes of each cell across t
 
 This grid-integration method makes the volume estimation more robust to irregular and uneven object surfaces compared to just taking the bounding box. However, it is sensitive to plane fitting errors.  
 
-Note: the object dimensions are still represented as a box, even for irregular objects.
+> **Note:** the object dimensions are still represented as a box, even for irregular objects.
 
 ### Outputs
 
