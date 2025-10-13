@@ -81,15 +81,20 @@ class MeasurementNode(dai.node.ThreadedHostNode):
         self.g_imu_plane = None
     
     def reset_measurements(self):
+        self.pcl_measure.from_reset = True
         self._last_dims.clear()
         self._last_vol.clear()
+        self.pcl_measure.reset_obb_filter()
+        self.pcl_measure.reset_hg_filter()
 
     # -------------- Emit measurements --------------------
     def push_measurements(self, dims_cm, vol_cm3):
-        if dims_cm.size == 3 and np.all(np.isfinite(dims_cm)):
-            self._last_dims.append(tuple(float(x) for x in dims_cm))
-        if isinstance(vol_cm3, (int, float)) and np.isfinite(vol_cm3):
-            self._last_vol.append(float(vol_cm3))
+        if dims_cm is not None:
+            if dims_cm.size == 3 and np.all(np.isfinite(dims_cm)):
+                self._last_dims.append(tuple(float(x) for x in dims_cm))
+        if vol_cm3 is not None:
+            if isinstance(vol_cm3, (int, float)) and np.isfinite(vol_cm3):
+                self._last_vol.append(float(vol_cm3))
 
     def _emit_median(self, pcl_msg, dims_cm, vol_cm3):
         self.push_measurements(dims_cm, vol_cm3)
@@ -142,7 +147,7 @@ class MeasurementNode(dai.node.ThreadedHostNode):
         Draw a wireframe overlay.
 
         - If 'edges' is provided: draws segments defined by (i,j) pairs over pts3d (OBB case).
-        - If 'edges' is None and len(pts3d) == 8: assumes a box and uses _BOX_EDGES (height-grid case).
+        - If 'edges' is None and len(pts3d) == 8: assumes a box and uses BOX_EDGES (height-grid case).
         """
         helper = AnnotationHelper()
 
@@ -303,7 +308,8 @@ class MeasurementNode(dai.node.ThreadedHostNode):
                     self.an_node.requestPlaneCapture(False)
                     self.pcl_measure.set_point_cloud(points, rgb)
                     self.pcl_measure.get_measurement_OBB()
-                    self._emit_overlay(pcl_msg, self.pcl_measure.obb_pts, self.pcl_measure.obb_edges)
+
+                    self._emit_overlay(pcl_msg, self.pcl_measure.obb_pts)
                     self._emit_median(pcl_msg, self.pcl_measure.dimensions, self.pcl_measure.volume)
 
                 elif self.measurement_mode == "heightgrid":

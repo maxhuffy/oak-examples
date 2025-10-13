@@ -333,7 +333,7 @@ class AnnotationNode(dai.node.ThreadedHostNode):
                 kept_idx = [max(kept_idx, key=lambda i: getattr(dets[i], "confidence", 0.0))]
 
             if not kept_idx:
-                # click hit nothing behave like no selection (but signal NOSELECTION)
+                # click hit nothing behave like no selection (signal NOSELECTION)
                 if m is not None and m.size:
                     present_ids = set(int(v) for v in np.unique(m) if v >= 0)
                     for idx in present_ids:

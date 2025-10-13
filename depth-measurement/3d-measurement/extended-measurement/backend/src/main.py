@@ -1,7 +1,4 @@
-from pathlib import Path
-
 import depthai as dai
-import numpy as np
 
 from depthai_nodes.node import (
     ParsingNeuralNetwork,
@@ -59,10 +56,8 @@ with dai.Pipeline(device) as pipeline:
     cam = pipeline.create(dai.node.Camera).build(boardSocket=dai.CameraBoardSocket.CAM_A)
     cam_out = cam.requestOutput(size=(640, 400), type=dai.ImgFrame.Type.RGB888i, fps=args.fps_limit)
         
-    # stereo config 
     left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
     right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
-
     left_out = left.requestOutput((640, 400), type=dai.ImgFrame.Type.NV12, fps=args.fps_limit)
     right_out = right.requestOutput((640, 400), type=dai.ImgFrame.Type.NV12, fps=args.fps_limit)
 
@@ -86,7 +81,6 @@ with dai.Pipeline(device) as pipeline:
 
     stereo.depth.link(align.input)
     cam_out.link(align.inputAlignTo)
-
     cam_out.link(manip.inputImage)
     
     input_node = manip.out 
@@ -105,7 +99,6 @@ with dai.Pipeline(device) as pipeline:
     textInputQueue = nn_with_parser.inputs["texts"].createInputQueue()
     nn_with_parser.inputs["texts"].setReusePreviousMessage(True)
 
-    
     det_process_filter = pipeline.create(ImgDetectionsFilter).build(nn_with_parser.out)
     det_process_filter.setLabels(labels=[i for i in range(len(CLASS_NAMES))], keep=True) 
     
@@ -128,17 +121,15 @@ with dai.Pipeline(device) as pipeline:
         annotation_node.out_selection,
         imu.out
     )            
-
     measurement_node.out_result.link(annotation_node.in_meas_result)   
 
     fx, fy, cx, cy = read_intrinsics(device, 640, 400)
     measurement_node.setIntrinsics(fx, fy, cx, cy, imgW=640, imgH=400)  
-
     measurement_node.an_node = annotation_node
 
     # Service functions for all functionalities of the frontend 
     def class_update_service(new_classes: list[str]):
-        #Changes classes to detect based on the user input
+        """Changes classes to detect based on the user input"""
         if len(new_classes) == 0:
             print("List of new classes empty, skipping.")
             return
@@ -167,10 +158,10 @@ with dai.Pipeline(device) as pipeline:
         print(f"Confidence threshold set to: {CONFIDENCE_THRESHOLD}:")
     
     def selection_service(clicks: dict):
+        """Changes selected object based on the user click"""
         if clicks.get("clear"):
             annotation_node.clearSelection()
             return {"ok": True, "cleared": True}
-
         try:
             x = float(clicks["x"]); y = float(clicks["y"])
         except Exception as e:
@@ -186,6 +177,7 @@ with dai.Pipeline(device) as pipeline:
     
     def measurement_method_service(payload: dict):
         """
+        Changes measurement method based on the user input
         Expects: {"method": "obb"|"heightgrid"}
         """
         method = str(payload.get("method", "")).lower()
@@ -200,7 +192,7 @@ with dai.Pipeline(device) as pipeline:
         print('Selected method: ', method)
         return {"ok": True, "method": method, "have_plane": measurement_node.have_plane}
     
-    # This is how we connect the services in the frontend to functions in the backend!
+    # Connect the services in the frontend to functions in the backend
     visualizer.registerService("Selection Service", selection_service)
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService("Threshold Update Service", conf_threshold_update_service)
@@ -219,7 +211,6 @@ with dai.Pipeline(device) as pipeline:
 
     inputNNData = dai.NNData()
     inputNNData.addTensor("texts", text_features, dataType=dai.TensorInfo.DataType.FP16)
-
     textInputQueue.send(inputNNData)
 
     print("Press 'q' to stop")
