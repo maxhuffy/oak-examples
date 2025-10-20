@@ -12,6 +12,7 @@ class NoDetectionsGate:
     - enabled: externally toggled
     - in_run: True while we are in a zero-detection streak
     """
+
     def __init__(self) -> None:
         self.enabled: bool = False
         self.in_run: bool = False
@@ -40,9 +41,9 @@ class NoDetectionsGate:
 
 
 def _build_extras(
-    model: str,
-    det_data: dai.ImgDetections | ImgDetectionsExtended,
-    class_names: List[str],
+        model: str,
+        det_data: dai.ImgDetections | ImgDetectionsExtended,
+        class_names: List[str],
 ):
     detections = det_data.detections or []
     dets_labels = [det.label for det in detections]
@@ -79,13 +80,13 @@ def _build_extras(
 
 
 def custom_snap_process(
-    producer: SnapsProducer,
-    frame: dai.ImgFrame,
-    det_data: dai.ImgDetections | ImgDetectionsExtended,
-    class_names: List[str],
-    model: str,
-    no_det_gate: Optional[NoDetectionsGate] = None,
-    timed_state: Optional[dict] = None,
+        producer: SnapsProducer,
+        frame: dai.ImgFrame,
+        det_data: dai.ImgDetections | ImgDetectionsExtended,
+        class_names: List[str],
+        model: str,
+        no_det_gate: Optional[NoDetectionsGate] = None,
+        timed_state: Optional[dict] = None,
 ):
     """
     Called frequently by SnapsProducer; we decide what to send and with which tags.
@@ -139,12 +140,21 @@ def custom_snap_process(
 # ------------------ New-detection snap (TRACKED gating + cooldown) ------------------
 
 class _NewDetectionsState:
-    """Plain dicts (no defaultdict) + a set for seen IDs."""
+    """Plain dicts + a set (no defaultdict, no nonlocal)."""
+
     def __init__(self) -> None:
         self.seen_ids: set[int] = set()
-        self.last_label_ts: dict[str, float] = {}  # label -> last snap epoch seconds
+        self.last_label_ts: dict[str, float] = {}
+
 
 _NEWDET_STATE = _NewDetectionsState()
+
+
+def reset_new_detections_state() -> None:
+    """Clear memory so currently present TRACKED objects will be treated as 'new'."""
+    _NEWDET_STATE.seen_ids.clear()
+    _NEWDET_STATE.last_label_ts.clear()
+    print("[NewDet] State reset")
 
 
 def tracklet_new_detection_process(
@@ -163,21 +173,17 @@ def tracklet_new_detection_process(
     """
     tks = getattr(tracklets_msg, "tracklets", []) or []
     now = time.time()
-    fired_any = False
 
     for t in tks:
-        # Robustly read status (enum or int)
+        # Robustly read status (enum or int) -> TRACKED?
         status_val = getattr(t, "status", None)
         try:
             is_tracked = (status_val == dai.Tracklet.TrackingStatus.TRACKED)
         except Exception:
-            # Fallback: enum may not be available; typical mapping NEW=0, TRACKED=1, LOST=2
             is_tracked = int(status_val) == 1
-
         if not is_tracked:
             continue
 
-        # Only once per ID
         try:
             tid = int(getattr(t, "id", -1))
         except Exception:
@@ -185,15 +191,12 @@ def tracklet_new_detection_process(
         if tid < 0 or tid in _NEWDET_STATE.seen_ids:
             continue
 
-        # Optional per-label cooldown
         label_idx = int(getattr(t, "label", -1))
         label_str = class_names[label_idx] if 0 <= label_idx < len(class_names) else ""
         last_ts = _NEWDET_STATE.last_label_ts.get(label_str, 0.0)
         if label_str and (now - last_ts) < float(min_label_cooldown_s):
-            # still in cooldown window for this label
             continue
 
-        # Build extras + send
         file_group = [dai.FileData(frame, "rgb")]
         extras = {
             "model": model,
@@ -206,6 +209,5 @@ def tracklet_new_detection_process(
             _NEWDET_STATE.seen_ids.add(tid)
             if label_str:
                 _NEWDET_STATE.last_label_ts[label_str] = now
-            fired_any = True
 
     return

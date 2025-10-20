@@ -27,6 +27,7 @@ from utils.snap_utils import (
     custom_snap_process,
     NoDetectionsGate,
     tracklet_new_detection_process,
+    reset_new_detections_state,   # NEW
 )
 
 load_dotenv(override=True)
@@ -72,7 +73,6 @@ text_features = extract_text_embeddings(
 )
 image_prompt_features = None
 if args.model == "yoloe":
-    # send dummy image-prompts initially
     image_prompt_features = make_dummy_features(
         MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision
     )
@@ -126,7 +126,6 @@ with dai.Pipeline(device) as pipeline:
         cam = pipeline.create(dai.node.Camera).build(
             boardSocket=dai.CameraBoardSocket.CAM_A
         )
-        # Request high-res NV12 frames for visualization/encoding
         video_src_out = cam.requestOutput(
             size=VISUALIZATION_RESOLUTION,
             type=dai.ImgFrame.Type.NV12,
@@ -176,9 +175,13 @@ with dai.Pipeline(device) as pipeline:
     # Cache last frame for services that need full frame content
     frame_cache = pipeline.create(FrameCacheNode).build(video_src_out)
 
-    # --- state for triggers (timed + no-detections)
+    # --- state for triggers (timed + no-detections) and runtime flags (no nonlocal)
     no_det_gate = NoDetectionsGate()
     _snap_state = {"timed_enabled": False, "interval": 60, "last_sent_s": -1.0}
+    _runtime = {
+        "newdet_running": False,
+        "conf_threshold": CONFIDENCE_THRESHOLD,  # optional live copy
+    }
 
     # TIMED + NO-DET producer (works via the process_fn, ticking internally)
     snaps_producer = pipeline.create(SnapsProducer).build(
@@ -196,29 +199,24 @@ with dai.Pipeline(device) as pipeline:
     snaps_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
     print("Snaps producer API KEY:", os.getenv("DEPTHAI_HUB_API_KEY"))
 
-    # --------- ObjectTracker + producer for "new detections" (tuned) ----------
+    # --------- ObjectTracker + producer for "new detections" ----------
     object_tracker = pipeline.create(dai.node.ObjectTracker)
 
-    # RVC4-supported tracker; log will say it anyway if a different type is forced
+    # Use RVC4-supported type; SDK will warn if it forces something else
     object_tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
-
-    # Keep IDs stable even if detections overlap/vanish briefly
     object_tracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.UNIQUE_ID)
     object_tracker.setTrackingPerClass(True)
+    object_tracker.setTrackletBirthThreshold(1)      # frames before TRACKED
+    object_tracker.setTrackletMaxLifespan(180)       # frames until LOST removed
+    object_tracker.setOcclusionRatioThreshold(0.5)   # filter heavy overlaps
+    object_tracker.setTrackerThreshold(0.25)         # ignore low-conf dets
 
-    # TUNABLES (adjust as needed)
-    object_tracker.setTrackletBirthThreshold(3)      # frames before TRACKED (was 3)
-    object_tracker.setTrackletMaxLifespan(180)       # frames until LOST track is removed
-    object_tracker.setOcclusionRatioThreshold(0.5)   # filter heavy overlaps a bit more
-    object_tracker.setTrackerThreshold(0.25)         # ignore very low-conf dets in tracking
-
-    # Inputs
-    # Use the same resized/manip frames for both tracker inputs so they align with detections
+    # Inputs: use same resized/manip frames to align with detections
     input_node.link(object_tracker.inputTrackerFrame)
     input_node.link(object_tracker.inputDetectionFrame)
     filtered_bridge.out.link(object_tracker.inputDetections)
 
-    # Producer that listens to tracklets and sends a snap when any TRACKED appears first time
+    # Producer that sends a snap when any TRACKED appears first time after (re)start
     snaps_newdet_producer = pipeline.create(SnapsProducer).build(
         frame=video_src_out,
         msg=object_tracker.out,
@@ -238,7 +236,7 @@ with dai.Pipeline(device) as pipeline:
         annotation_node.setLabelEncoding(
             {offset + k: v for k, v in enumerate(label_names)}
         )
-        # If you want to restrict tracker by labels, enable below:
+        # To restrict tracker labels, you could enable:
         # object_tracker.setDetectionLabelsToTrack(list(range(offset, offset + len(label_names))))
 
     # visualization topics
@@ -296,7 +294,6 @@ with dai.Pipeline(device) as pipeline:
             ),
         )
         textInputQueue.send(inputNNData)
-        # In unified YOLOE, ensure image_prompts are dummy when text prompts are active
         if args.model == "yoloe":
             dummy = make_dummy_features(
                 MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision
@@ -318,9 +315,9 @@ with dai.Pipeline(device) as pipeline:
 
     def conf_threshold_update_service(new_conf_threshold: float):
         """Changes confidence threshold based on the user input"""
-        CONFIDENCE_THRESHOLD = max(0, min(1, new_conf_threshold))
-        nn_with_parser.getParser(0).setConfidenceThreshold(CONFIDENCE_THRESHOLD)
-        print(f"Confidence threshold set to: {CONFIDENCE_THRESHOLD}:")
+        _runtime["conf_threshold"] = max(0.0, min(1.0, float(new_conf_threshold)))
+        nn_with_parser.getParser(0).setConfidenceThreshold(_runtime["conf_threshold"])
+        print(f"Confidence threshold set to: {_runtime['conf_threshold']}")
 
     def image_upload_service(image_data):
         image = base64_to_cv2_image(image_data["data"])
@@ -430,7 +427,6 @@ with dai.Pipeline(device) as pipeline:
             snaps_producer.setRunning(any_active)
             if any_active:
                 snaps_producer.setTimeInterval(base_dt_seconds)
-            # Do not touch new-detection producer in legacy mode
             print(f"[SnapService] (legacy) timed={_snap_state['timed_enabled']}, interval={_snap_state['interval']}, noDet={no_det_gate.enabled}")
             return {"ok": True}
 
@@ -456,7 +452,13 @@ with dai.Pipeline(device) as pipeline:
             if "newDetections" in payload:
                 n2cfg = payload["newDetections"] or {}
                 new_on = bool(n2cfg.get("enabled", False))
+
+                # OFF -> ON => reset memory so current TRACKED items count as "new"
+                if new_on and not _runtime["newdet_running"]:
+                    reset_new_detections_state()
+
                 snaps_newdet_producer.setRunning(new_on)
+                _runtime["newdet_running"] = new_on
                 # React on every message if allowed
                 try:
                     snaps_newdet_producer.setTimeInterval(0)
@@ -469,7 +471,11 @@ with dai.Pipeline(device) as pipeline:
             if any_active:
                 snaps_producer.setTimeInterval(base_dt_seconds)
 
-            print(f"[SnapService] timed={_snap_state['timed_enabled']}, interval={_snap_state['interval']}, noDet={no_det_gate.enabled}")
+            print(
+                f"[SnapService] timed={_snap_state['timed_enabled']}, "
+                f"interval={_snap_state['interval']}, noDet={no_det_gate.enabled}, "
+                f"newDet={_runtime['newdet_running']}"
+            )
             return {"ok": True}
 
         print("[SnapService] Unsupported payload format")
