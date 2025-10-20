@@ -113,7 +113,9 @@ with pipeline:
         in_disp = disp_xout.get()
         in_depth = depth_xout.get()
         running_calibration = device.getCalibration()
-        M = np.array(running_calibration.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B))
+        M = np.array(
+            running_calibration.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
+        )
         coverage = coverage_output.tryGet()
         calibration_result = calibration_output.tryGet()
 
@@ -256,7 +258,7 @@ with pipeline:
 
                 valid = roi > 0
                 if np.any(valid):
-                    depth_mm = float(roi[valid].mean())   # in millimeters
+                    depth_mm = float(roi[valid].mean())  # in millimeters
                     depth_history.append(depth_mm)
                 # else: keep previous history if current ROI is invalid
 
@@ -286,10 +288,26 @@ with pipeline:
                 display_text_euc = f"3D Dist: {euclidean_dist:.2f} m"
 
                 # Example of drawing (depends on your OpenCV overlay logic):
-                cv2.putText(masterFrame, display_text_depth, text_pos_1,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
-                cv2.putText(masterFrame, display_text_euc, text_pos_2,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1, cv2.LINE_AA)
+                cv2.putText(
+                    masterFrame,
+                    display_text_depth,
+                    text_pos_1,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    masterFrame,
+                    display_text_euc,
+                    text_pos_2,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
 
                 # ROI display area (unchanged)
                 disp_x0 = disp_x_start + (x0 // 2)
