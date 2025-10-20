@@ -517,7 +517,7 @@ def print_final_calibration_results(calib_quality, state: str):
 
 
 def draw_key_commands(
-    image, font_scale=1.2, color=(255, 255, 255), thickness=2, line_spacing=55
+    image, font_scale=1.1, color=(255, 255, 255), thickness=2, line_spacing=50
 ):
     """Draws key command info centered on the image with a semi-transparent full-frame background."""
     commands = [
@@ -533,6 +533,7 @@ def draw_key_commands(
         "[k] Flash old calibration",
         "[f] Flash factory calibration",
         "[x] -> Save current frames.",
+        "[+/-] -> Adjust ROi size",
         "[q] Quit",
     ]
 

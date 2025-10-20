@@ -19,6 +19,8 @@ DEPTH_HISTORY_SIZE = 10
 depth_history = deque(maxlen=DEPTH_HISTORY_SIZE)
 last_mouse_pos = None  # reset history if mouse moves to new pixel
 mouse_coords = (-1, -1)
+roi_size = 10
+step_roi = 5
 
 
 def on_mouse_disparity(event, x, y, flags, param):
@@ -110,7 +112,8 @@ with pipeline:
         in_right = right_xout.get()
         in_disp = disp_xout.get()
         in_depth = depth_xout.get()
-
+        running_calibration = device.getCalibration()
+        M = np.array(running_calibration.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B))
         coverage = coverage_output.tryGet()
         calibration_result = calibration_output.tryGet()
 
@@ -237,8 +240,7 @@ with pipeline:
             ):
                 cy = int(round(local_y * 2))
                 cx = int(round(local_x * 2))
-
-                half = 10  # ROI radius → window size = 2*half + 1
+                half = roi_size
                 y0 = max(0, cy - half)
                 y1 = min(depth_frame.shape[0], cy + half + 1)
                 x0 = max(0, cx - half)
@@ -263,12 +265,37 @@ with pipeline:
                 else:
                     depth_val = float("nan")
 
-                display_text_depth = f"Depth: {depth_val:.2f}m"
-                text_pos = (scaled_mouse_x + 10, scaled_mouse_y + 10)
+                # === Compute Euclidean distance using intrinsics ===
+                # Intrinsic matrix parameters (from M)
+                fx = M[0, 0]
+                fy = M[1, 1]
+                cx_intr = M[0, 2]
+                cy_intr = M[1, 2]
+
+                # Compute normalized pixel coordinates (optical center offset)
+                X = (cx - cx_intr) * depth_val / fx
+                Y = (cy - cy_intr) * depth_val / fy
+                Z = depth_val
+
+                euclidean_dist = float(np.sqrt(X**2 + Y**2 + Z**2))  # meters
+                # === Display text in two lines ===
+                text_pos_1 = (scaled_mouse_x + 10, scaled_mouse_y + 10)
+                text_pos_2 = (scaled_mouse_x + 10, scaled_mouse_y + 30)
+
+                display_text_depth = f"Depth: {depth_val:.2f} m"
+                display_text_euc = f"3D Dist: {euclidean_dist:.2f} m"
+
+                # Example of drawing (depends on your OpenCV overlay logic):
+                cv2.putText(masterFrame, display_text_depth, text_pos_1,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
+                cv2.putText(masterFrame, display_text_euc, text_pos_2,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1, cv2.LINE_AA)
+
+                # ROI display area (unchanged)
                 disp_x0 = disp_x_start + (x0 // 2)
-                disp_x1 = disp_x_start + ((x1 - 1) // 2 + 1)  # include the last column
+                disp_x1 = disp_x_start + ((x1 - 1) // 2 + 1)
                 disp_y0 = disp_y_start + (y0 // 2)
-                disp_y1 = disp_y_start + ((y1 - 1) // 2 + 1)  # include the last row
+                disp_y1 = disp_y_start + ((y1 - 1) // 2 + 1)
 
                 overlay = masterFrame.copy()
                 cv2.rectangle(
@@ -277,16 +304,6 @@ with pipeline:
                 alpha = 0.6
                 masterFrame = cv2.addWeighted(
                     overlay, alpha, masterFrame, 1 - alpha, 0, masterFrame
-                )
-                cv2.putText(
-                    masterFrame,
-                    display_text_depth,
-                    text_pos,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
                 )
 
         if leftFrame is not None and rightFrame is not None:
@@ -422,6 +439,26 @@ with pipeline:
                 )
             )
             print("Image loaded successfully.")
+            start_time = time.time()
+
+        elif key == ord("+"):
+            state = "Display Text"
+            text = f"Increase ROI size by 1. \nCurrent size {roi_size // 2}x {roi_size // 2}"
+            finalDisplay = True
+            if roi_size > step_roi:
+                roi_size += step_roi
+            else:
+                roi_size += step_roi
+            start_time = time.time()
+
+        elif key == ord("-"):
+            state = "Display Text"
+            text = f"Decrease ROI size by 1. \nCurrent size {roi_size // 2}x {roi_size // 2}"
+            finalDisplay = True
+            if roi_size > step_roi:
+                roi_size -= step_roi
+            else:
+                roi_size = step_roi
             start_time = time.time()
 
         elif key == ord("x"):
