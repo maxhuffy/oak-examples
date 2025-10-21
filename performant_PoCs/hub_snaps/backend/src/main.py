@@ -245,45 +245,41 @@ with dai.Pipeline(device) as pipeline:
     visualizer.addTopic("Detections", annotation_node.out)
 
     def class_update_service(new_classes: list[str]):
-        """Changes classes to detect based on the user input (YOLOE-only)"""
-        if len(new_classes) == 0:
+        if not new_classes:
             print("List of new classes empty, skipping.")
             return
         if len(new_classes) > MAX_NUM_CLASSES:
-            print(
-                f"Number of new classes ({len(new_classes)}) exceeds maximum number of classes ({MAX_NUM_CLASSES}), skipping."
-            )
+            print(f"Too many classes ({len(new_classes)}) > {MAX_NUM_CLASSES}, skipping.")
             return
 
-        class_names = new_classes
-        input_NN_data_img = dai.NNData()
-        input_NN_data_img.addTensor(
+        feats = extract_text_embeddings(
+            class_names=new_classes,
+            max_num_classes=MAX_NUM_CLASSES,
+            model_name="yoloe",
+            precision=args.precision,
+        )
+        nn_txt = dai.NNData()
+        nn_txt.addTensor(
             "texts",
-            text_features,
-            dataType=(
-                dai.TensorInfo.DataType.FP16
-                if args.precision == "fp16"
-                else dai.TensorInfo.DataType.U8F
-            ),
+            feats,
+            dataType=(dai.TensorInfo.DataType.FP16 if args.precision == "fp16"
+                      else dai.TensorInfo.DataType.U8F),
         )
-        textInputQueue.send(input_NN_data_img)
+        textInputQueue.send(nn_txt)
 
-        dummy = make_dummy_features(
-            MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision
-        )
-        input_NN_data_img = dai.NNData()
-        input_NN_data_img.addTensor(
+        dummy = make_dummy_features(MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision)
+        nn_img = dai.NNData()
+        nn_img.addTensor(
             "image_prompts",
             dummy,
-            dataType=(
-                dai.TensorInfo.DataType.FP16
-                if args.precision == "fp16"
-                else dai.TensorInfo.DataType.U8F
-            ),
+            dataType=(dai.TensorInfo.DataType.FP16 if args.precision == "fp16"
+                      else dai.TensorInfo.DataType.U8F),
         )
-        imagePromptInputQueue.send(input_NN_data_img)
+        imagePromptInputQueue.send(nn_img)
 
-        update_labels(class_names, offset=0)
+        update_labels(new_classes, offset=0)
+
+        print(f"Classes updated (YOLOE text): {new_classes}")
 
     def conf_threshold_update_service(new_conf_threshold: float):
         """Changes confidence threshold based on the user input"""
