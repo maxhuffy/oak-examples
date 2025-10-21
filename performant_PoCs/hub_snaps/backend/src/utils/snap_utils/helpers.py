@@ -39,18 +39,6 @@ def _label_idx_name(tracklet, class_names: List[str]) -> Tuple[int, str]:
     return idx, name
 
 
-def _sanitize_extras(extras: dict, max_key: int = 40, max_val: int = 100) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for k, v in (extras or {}).items():
-        ks = str(k)[:max_key] or "k"
-        vs = str(v)
-        if len(vs) > max_val:
-            vs = vs[: max_val - 3] + "..."
-        out[ks] = vs
-    return out
-
-
 def _send_snap(name: str, producer: SnapsProducer, frame: dai.ImgFrame, tags: List[str], extras: dict,
                detections: dai.ImgDetections = None) -> bool:
-    ex = _sanitize_extras(extras)
-    return producer.sendSnap(name, frame, detections, tags, ex)
+    return producer.sendSnap(name, frame, detections, tags, extras)

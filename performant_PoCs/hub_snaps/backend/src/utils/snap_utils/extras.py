@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import List
 import depthai as dai
 from depthai_nodes import ImgDetectionsExtended
-from .helpers import _sanitize_extras
 
 
 def build_extras(
@@ -54,4 +53,4 @@ def build_extras(
     else:
         extras["dtype"] = type(det_data).__name__
 
-    return _sanitize_extras(extras)
+    return extras
