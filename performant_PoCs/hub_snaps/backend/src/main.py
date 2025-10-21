@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 from functools import partial
 
+os.environ["DEPTHAI_LEVEL"] = "info"
 import depthai as dai
 from depthai_nodes.node import (
     ParsingNeuralNetwork,
@@ -11,6 +12,7 @@ from depthai_nodes.node import (
     ImgFrameOverlay,
     ApplyColormap,
     SnapsProducer,
+    SnapsProducer2Buffered,
     ImgDetectionsBridge,
 )
 
@@ -172,7 +174,7 @@ with dai.Pipeline(device) as pipeline:
 
     snaps_producer = pipeline.create(SnapsProducer).build(
         frame=video_src_out,
-        msg=det_process_filter.out,
+        msg=filtered_bridge.out,
         running=False,
         process_fn=partial(
             custom_snap_process,
@@ -182,7 +184,7 @@ with dai.Pipeline(device) as pipeline:
             timed_state=_snap_state,
         ),
     )
-    snaps_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
+    #snaps_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
 
     object_tracker = pipeline.create(dai.node.ObjectTracker)
 
@@ -198,9 +200,10 @@ with dai.Pipeline(device) as pipeline:
     input_node.link(object_tracker.inputDetectionFrame)
     filtered_bridge.out.link(object_tracker.inputDetections)
 
-    snaps_newdet_producer = pipeline.create(SnapsProducer).build(
+    snaps_newdet_producer = pipeline.create(SnapsProducer2Buffered).build(
         frame=video_src_out,
-        msg=object_tracker.out,
+        msg=filtered_bridge.out,
+        msg2=object_tracker.out,
         running=False,
         process_fn=partial(
             tracklet_new_detection_process,
@@ -209,7 +212,7 @@ with dai.Pipeline(device) as pipeline:
         ),
     )
 
-    snaps_newdet_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
+    #snaps_newdet_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
 
     def update_labels(label_names: list[str], offset: int = 0):
         det_process_filter.setLabels(

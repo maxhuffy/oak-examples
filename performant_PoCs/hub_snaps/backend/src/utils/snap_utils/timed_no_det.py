@@ -11,7 +11,7 @@ from .no_detections_gate import NoDetectionsGate
 def custom_snap_process(
     producer: SnapsProducer,
     frame: dai.ImgFrame,
-    det_data: dai.ImgDetections | dai.ImgDetections,
+    det_data: dai.ImgDetections,
     class_names: List[str],
     model: str,
     no_det_gate: Optional[NoDetectionsGate] = None,
@@ -19,7 +19,6 @@ def custom_snap_process(
 ):
     dets = getattr(det_data, "detections", None) or []
     num = len(dets)
-
     now_s = _frame_ts_seconds(frame) if timed_state is not None else None
     if timed_state and timed_state.get("timed_enabled", False):
         interval = float(timed_state.get("interval", 0.0)) or 0.0
@@ -27,7 +26,7 @@ def custom_snap_process(
         due = (now_s is not None) and (interval > 0.0) and ((last < 0.0) or (now_s - last >= interval))
         if due:
             extras = build_extras(model, det_data, class_names)
-            if _send_snap(producer, frame, ["Timing_snap"], extras):
+            if _send_snap("Timing Snap", producer, frame, ["timing_snap"], extras, det_data):
                 timed_state["last_sent_s"] = now_s
                 if no_det_gate:
                     no_det_gate.on_frame(num)
@@ -37,7 +36,7 @@ def custom_snap_process(
     if num == 0:
         if no_det_gate and no_det_gate.on_frame(0):
             extras = {"model": model, "reason": "no_detections_start"}
-            if _send_snap(producer, frame, ["no_detections"], extras):
+            if _send_snap("No Detections", producer, frame, ["no_detections"], extras):
                 print("[NoDet] Snap sent (start of empty streak)")
         return
 

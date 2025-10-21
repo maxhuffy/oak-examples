@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import List, Optional, Tuple
 import depthai as dai
+from depthai_nodes.node import SnapsProducer
 
 
 def _frame_ts_seconds(frame: dai.ImgFrame) -> Optional[float]:
@@ -49,11 +50,11 @@ def _sanitize_extras(extras: dict, max_key: int = 40, max_val: int = 100) -> dic
     return out
 
 
-def _send_snap(producer, frame: dai.ImgFrame, tags: List[str], extras: dict) -> bool:
+def _send_snap(name: str, producer: SnapsProducer, frame: dai.ImgFrame, tags: List[str], extras: dict,
+               detections: dai.ImgDetections = None) -> bool:
     """
     Use positional-only call. If the wrapper signature differs on your build,
     fall back to EventsManager.
     """
-    fg = [dai.FileData(frame, "rgb")]
     ex = _sanitize_extras(extras)
-    return producer.sendSnap("rgb", fg, tags, ex)
+    return producer.sendSnap(name, frame, detections, tags, ex)

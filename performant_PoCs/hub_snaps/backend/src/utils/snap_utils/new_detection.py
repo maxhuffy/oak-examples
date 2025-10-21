@@ -32,6 +32,7 @@ def tracklet_new_detection_process(
     producer: SnapsProducer,
     frame: dai.ImgFrame,
     tracklets_msg: dai.Tracklets,
+    det_data: dai.ImgDetections,
     class_names: List[str],
     model: str,
     min_label_cooldown_s: float = 2.0,
@@ -70,7 +71,7 @@ def tracklet_new_detection_process(
         except Exception:
             pass
 
-        if _send_snap(producer, frame, ["new_detection"], extras):
+        if _send_snap("New Detection", producer, frame, ["new_detection"], extras, det_data):
             _NEWDET_STATE.seen_ids.add(tid)
             if label_str:
                 _NEWDET_STATE.last_label_ts[label_str] = now_s
