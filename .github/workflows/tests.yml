@@ -37,14 +37,17 @@ on:
         decription: 'One or more space-separated paths to example directories you want to test. Defaults to "." (all).'
         default: "."
         required: false
-      strict_mode:
-        description: "If set to 'yes', tests will fail on DepthAI warnings."
-        type: choice
-        options:
-          - "yes"
-          - "no"
-        default: "no"
+      # strict_mode: 
+      #   description: "If set to 'yes', tests will fail on DepthAI warnings."
+      #   type: choice
+      #   options:
+      #     - "yes"
+      #     - "no"
+      #   default: "no"
+      #   required: false   TEMP DISABLED UNTIL BETTER SOLUTION TO GET UNDER 10 params
+      scope:
         required: false
+        type: string
       subtests:
         description: "Specify if should run only peripheral, only standalone or both"
         type: choice
@@ -142,7 +145,11 @@ jobs:
                 RESERVATION_OPTION="--reservation-name $RESERVATION_NAME"
           fi
 
-          exec hil_runner --models "$MODEL" $RESERVATION_OPTION $HOLD_RESERVATION --wait --sync-workspace \
+          if [[ -n "${{ github.event.inputs.scope }}" ]]; then
+            SCOPE_OPTION="--scope ${{ github.event.inputs.scope }}"
+          fi
+
+          exec hil_runner --models "$MODEL" $RESERVATION_OPTION $HOLD_RESERVATION --wait $SCOPE_OPTION --sync-workspace \
               --dockerfile ./tests/Dockerfile_peripheral \
               --docker-build-args "--build-arg PYTHON_VERSION=${{ matrix.python-version }}" \
               --docker-run-args "$ENV_VARS"
@@ -189,8 +196,11 @@ jobs:
             else
                 RESERVATION_OPTION="--reservation-name $RESERVATION_NAME"
           fi
+          if [[ -n "${{ github.event.inputs.scope }}" ]]; then
+            SCOPE_OPTION="--scope ${{ github.event.inputs.scope }}"
+          fi
 
-          exec hil_runner --models "oak4_pro or oak4_d" $RESERVATION_OPTION $HOLD_RESERVATION --wait --oakctl --sync-workspace \
+          exec hil_runner --models "oak4_pro or oak4_d" $RESERVATION_OPTION $HOLD_RESERVATION --wait $SCOPE_OPTION --oakctl --sync-workspace \
               --dockerfile ./tests/Dockerfile_standalone \
               --docker-build-args "--build-arg PYTHON_VERSION=3.12" \
               --docker-run-args "$ENV_VARS"
