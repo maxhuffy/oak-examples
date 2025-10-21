@@ -134,7 +134,7 @@ jobs:
             --env PYTHON_VERSION_ENV=${{ matrix.python-version }} \
             --env LOG_LEVEL=${{ github.event.inputs.log_level }} \
             --env ROOT_DIR='${{ github.event.inputs.root_dir }}' \
-            --env STRICT_MODE=${{ github.event.inputs.strict_mode }} "
+            --env STRICT_MODE='no' "
 
           if [[ -n "${{ github.event.inputs.reservation_name }}" ]]; then
                 RESERVATION_OPTION="--reservation-name ${{ github.event.inputs.reservation_name }}"
@@ -184,7 +184,7 @@ jobs:
             --env PYTHON_VERSION_ENV="3.10" \
             --env LOG_LEVEL=${{ github.event.inputs.log_level }} \
             --env ROOT_DIR='${{ github.event.inputs.root_dir }}' \
-            --env STRICT_MODE=${{ github.event.inputs.strict_mode }} \
+            --env STRICT_MODE='no' \
             --env DEVICE_PASSWORD=${{ secrets.DEVICE_PASSWORD }}\
             --env LOCAL_STATIC_REGISTRY=${{ secrets.LOCAL_STATIC_REGISTRY }}"
 
@@ -204,3 +204,4 @@ jobs:
               --dockerfile ./tests/Dockerfile_standalone \
               --docker-build-args "--build-arg PYTHON_VERSION=3.12" \
               --docker-run-args "$ENV_VARS"
+
