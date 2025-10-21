@@ -202,8 +202,8 @@ with dai.Pipeline(device) as pipeline:
 
     snaps_newdet_producer = pipeline.create(SnapsProducer2Buffered).build(
         frame=video_src_out,
-        msg=filtered_bridge.out,
-        msg2=object_tracker.out,
+        msg=object_tracker.out,
+        msg2=filtered_bridge.out,
         running=False,
         process_fn=partial(
             tracklet_new_detection_process,

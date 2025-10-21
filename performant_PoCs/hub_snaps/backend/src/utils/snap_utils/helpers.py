@@ -52,9 +52,5 @@ def _sanitize_extras(extras: dict, max_key: int = 40, max_val: int = 100) -> dic
 
 def _send_snap(name: str, producer: SnapsProducer, frame: dai.ImgFrame, tags: List[str], extras: dict,
                detections: dai.ImgDetections = None) -> bool:
-    """
-    Use positional-only call. If the wrapper signature differs on your build,
-    fall back to EventsManager.
-    """
     ex = _sanitize_extras(extras)
     return producer.sendSnap(name, frame, detections, tags, ex)
