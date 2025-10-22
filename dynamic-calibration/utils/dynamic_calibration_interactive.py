@@ -14,6 +14,41 @@ from helper_functions import (
     print_final_calibration_results,
 )
 
+def nice_disparity_viz(in_disp_frame):
+    # 1) to float, keep a valid mask
+    disp = in_disp_frame.astype(np.float32)
+    valid = disp > 0
+
+    # If everything is invalid, just return a gray image
+    if not np.any(valid):
+        vis = np.zeros((*disp.shape, 3), np.uint8)
+        vis[:] = 127
+        return vis
+
+    # 2) robust range via percentiles on valid pixels
+    vals = disp[valid]
+    p_low, p_high = np.percentile(vals, (2, 98))
+
+    # Guard: widen if scene is too flat (avoid p_high == p_low)
+    if p_high - p_low < 1e-6:
+        p_low = float(vals.min())
+        p_high = float(vals.max() + 1e-6)
+
+    # 3) clip & normalize to 0–255
+    disp_clipped = np.clip(disp, p_low, p_high)
+    disp_norm = (disp_clipped - p_low) / (p_high - p_low)
+    disp_u8 = np.uint8(np.clip(disp_norm * 255.0, 0, 255))
+
+    # 4) boost mid-tones locally (CLAHE)
+    #    Helps a lot when the map is mostly one color
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    disp_eq = clahe.apply(disp_u8)
+
+    # 5) apply a perceptual colormap (TURBO if available)
+    colormap = getattr(cv2, "COLORMAP_TURBO", cv2.COLORMAP_JET)
+    vis = cv2.applyColorMap(disp_eq, colormap)
+    return vis
+
 # Rolling average for depth ROI means
 DEPTH_HISTORY_SIZE = 10
 depth_history = deque(maxlen=DEPTH_HISTORY_SIZE)
@@ -123,8 +158,7 @@ with pipeline:
         if in_disp:
             assert isinstance(in_disp, dai.ImgFrame)
             disp_frame = in_disp.getFrame()
-            disp_vis = (disp_frame * (255.0 / max_disp)).astype(np.uint8)
-            disp_vis = cv2.applyColorMap(disp_vis, cv2.COLORMAP_JET)
+            disp_vis = nice_disparity_viz(disp_frame)
 
         if in_depth:
             assert isinstance(in_depth, dai.ImgFrame)
