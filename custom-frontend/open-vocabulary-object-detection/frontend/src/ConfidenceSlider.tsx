@@ -34,8 +34,8 @@ export function ConfidenceSlider({ initialValue = 0.5 }: ConfidenceSliderProps) 
             </label>
             <input
                 type="range"
-                min="0"
-                max="1"
+                min="0.01"
+                max="0.99"
                 step="0.01"
                 value={value}
                 onChange={(e) => setValue(parseFloat(e.target.value))}

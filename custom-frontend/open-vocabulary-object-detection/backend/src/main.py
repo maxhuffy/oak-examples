@@ -256,7 +256,7 @@ with dai.Pipeline(device) as pipeline:
 
     def conf_threshold_update_service(new_conf_threshold: float):
         """Changes confidence threshold based on the user input"""
-        CONFIDENCE_THRESHOLD = max(0, min(1, new_conf_threshold))
+        CONFIDENCE_THRESHOLD = max(0.01, min(0.99, new_conf_threshold))
         nn_with_parser.getParser(0).setConfidenceThreshold(CONFIDENCE_THRESHOLD)
         print(f"Confidence threshold set to: {CONFIDENCE_THRESHOLD}:")
 
