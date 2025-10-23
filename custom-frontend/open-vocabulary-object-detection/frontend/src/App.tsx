@@ -383,9 +383,15 @@ function App() {
 
                 <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
                     <span className={css({ color: 'gray.600', fontSize: 'sm' })}>
-                        Note: Maximum of {MAX_IMAGE_PROMPTS} image prompts.
+                        ⓘ Maximum of {MAX_IMAGE_PROMPTS} image prompts.
                     </span>
-                    <Button variant="outline" onClick={handleResetImagePrompts}>Reset Image Prompts</Button>
+                    <Button
+                        variant="outline"
+                        onClick={handleResetImagePrompts}
+                        disabled={imagePromptCount === 0} // 🔹 Disable when no prompts
+                    >
+                        Reset Image Prompts
+                    </Button>
                 </div>
 
                 {imagePromptLabels.length > 0 && (
