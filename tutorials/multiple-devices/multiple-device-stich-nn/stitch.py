@@ -8,7 +8,7 @@ class Stitch(dai.node.ThreadedHostNode):
         super().__init__()
         self.input_frame1 = self.createInput()
         self.input_frame2 = self.createInput()
-
+        self.first_loop = True
         self.out = self.createOutput()
 
         self.stitch_err_msg = {cv2.STITCHER_ERR_NEED_MORE_IMGS: "stitcher does not have enough images",
@@ -43,12 +43,14 @@ class Stitch(dai.node.ThreadedHostNode):
             else:
                 print(f"Error stitching because: {self.stitch_err_msg[status]}")
                 non_stitched_frames_nr += 1
-                if non_stitched_frames_nr > 10:
+                if non_stitched_frames_nr > 10 or self.first_loop:
                     stitched = cv2.hconcat(images)
+                    self.first_loop = False
                 else:
                     stitched = prev_stitched
-                
+
             img_frame = dai.ImgFrame()
             stitched = cv2.resize(stitched, (512,288))
             img_frame.setCvFrame(stitched, dai.ImgFrame.Type.BGR888p)
             self.out.send(img_frame)
+            

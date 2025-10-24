@@ -48,6 +48,7 @@ with contextlib.ExitStack() as stack:
 
     visualizer.addTopic("Background blur", stitched.out)
     visualizer.addTopic("NN detections", nn_with_parser.out)
+    visualizer.addTopic("Raw video", outputs[0])
 
     for p in pipelines:
         p.start()
