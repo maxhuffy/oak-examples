@@ -4,13 +4,6 @@ import depthai as dai
 from depthai_nodes.node import SnapsProducer
 
 
-def _frame_ts_seconds(frame: dai.ImgFrame) -> Optional[float]:
-    try:
-        return float(frame.getTimestamp().total_seconds())
-    except Exception:
-        return None
-
-
 def _status_is_tracked(tracklet) -> bool:
     val = getattr(tracklet, "status", None)
     try:
@@ -42,16 +35,6 @@ def _label_idx_name(tracklet, class_names: List[str]) -> Tuple[int, str]:
 def _send_snap(name: str, producer: SnapsProducer, frame: dai.ImgFrame, tags: List[str], extras: dict,
                detections: dai.ImgDetections = None) -> bool:
     return producer.sendSnap(name, frame, detections, tags, extras)
-
-
-def _status_is_tracked(t) -> bool:
-    try:
-        return t.status == dai.Tracklet.TrackingStatus.TRACKED
-    except Exception:
-        try:
-            return int(getattr(t, "status", -1)) == 1
-        except Exception:
-            return False
 
 
 class _LostMidState:
