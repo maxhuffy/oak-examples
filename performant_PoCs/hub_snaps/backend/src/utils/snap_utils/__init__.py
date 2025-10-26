@@ -1,3 +1,2 @@
-from .no_detections_gate import NoDetectionsGate
+from .conditions_gate import ConditionsGate
 from .timed_no_det import custom_snap_process
-from .new_detection import tracklet_new_detection_process, reset_new_detections_state

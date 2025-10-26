@@ -11,7 +11,6 @@ from depthai_nodes.node import (
     ImgDetectionsFilter,
     ImgFrameOverlay,
     ApplyColormap,
-    SnapsProducer,
     SnapsProducer2Buffered,
     ImgDetectionsBridge,
 )
@@ -27,9 +26,7 @@ from utils.annotation_node import AnnotationNode
 from utils.frame_cache_node import FrameCacheNode
 from utils.snap_utils import (
     custom_snap_process,
-    NoDetectionsGate,
-    tracklet_new_detection_process,
-    reset_new_detections_state,
+    ConditionsGate,
 )
 
 load_dotenv(override=True)
@@ -164,35 +161,31 @@ with dai.Pipeline(device) as pipeline:
     # Cache last frame for services that need full frame content
     frame_cache = pipeline.create(FrameCacheNode).build(video_src_out)
 
-    # --- state for triggers (timed + no-detections) and runtime flags (no nonlocal)
-    no_det_gate = NoDetectionsGate()
-    _snap_state = {"timed_enabled": False, "interval": 60, "last_sent_s": -1.0}
+    cond_gate = ConditionsGate(default_cooldown_s=0.0, enabled=True)
+    cond_gate.set_key_enabled("no_detections", False)
+    cond_gate.set_cooldown("no_detections", 15.0)
+
+    cond_gate.set_key_enabled("timed", False)
+    cond_gate.set_cooldown("timed", 15.0)
+
+    cond_gate.set_key_enabled("low_conf", False)
+    cond_gate.set_cooldown("low_conf", 15.0)
+
+    cond_gate.set_key_enabled("lost_mid", False)
+    cond_gate.set_cooldown("lost_mid", 15.0)
+
     _runtime = {
         "newdet_running": False,
-        "conf_threshold": CONFIDENCE_THRESHOLD,  # optional live copy
+        "conf_threshold": CONFIDENCE_THRESHOLD,
+        "lost_mid_margin": 0.20,
     }
-
-    snaps_producer = pipeline.create(SnapsProducer).build(
-        frame=video_src_out,
-        msg=filtered_bridge.out,
-        running=False,
-        process_fn=partial(
-            custom_snap_process,
-            class_names=CLASS_NAMES,
-            model="yoloe",
-            no_det_gate=no_det_gate,
-            timed_state=_snap_state,
-        ),
-    )
-    #snaps_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
-
     object_tracker = pipeline.create(dai.node.ObjectTracker)
 
     object_tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
     object_tracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.UNIQUE_ID)
     object_tracker.setTrackingPerClass(True)
-    object_tracker.setTrackletBirthThreshold(1)
-    object_tracker.setTrackletMaxLifespan(180)
+    object_tracker.setTrackletBirthThreshold(3)
+    object_tracker.setTrackletMaxLifespan(90)
     object_tracker.setOcclusionRatioThreshold(0.5)
     object_tracker.setTrackerThreshold(0.25)
 
@@ -200,19 +193,19 @@ with dai.Pipeline(device) as pipeline:
     input_node.link(object_tracker.inputDetectionFrame)
     filtered_bridge.out.link(object_tracker.inputDetections)
 
-    snaps_newdet_producer = pipeline.create(SnapsProducer2Buffered).build(
+    snaps_producer = pipeline.create(SnapsProducer2Buffered).build(
         frame=video_src_out,
         msg=object_tracker.out,
         msg2=filtered_bridge.out,
         running=False,
         process_fn=partial(
-            tracklet_new_detection_process,
+            custom_snap_process,
             class_names=CLASS_NAMES,
             model="yoloe",
+            cond_gate=cond_gate,
+            runtime=_runtime,
         ),
     )
-
-    #snaps_newdet_producer._em.setSourceAppId(os.getenv("OAKAGENT_CONTAINER_ID"))
 
     def update_labels(label_names: list[str], offset: int = 0):
         det_process_filter.setLabels(
@@ -343,13 +336,18 @@ with dai.Pipeline(device) as pipeline:
         H, W = image.shape[:2]
         is_pixel = payload.get("bboxType", "normalized") == "pixel"
         if is_pixel:
-            x0 = int(round(bx)); y0 = int(round(by))
-            x1 = int(round(bx + bw)); y1 = int(round(by + bh))
+            x0 = int(round(bx))
+            y0 = int(round(by))
+            x1 = int(round(bx + bw))
+            y1 = int(round(by + bh))
         else:
-            x0 = int(round(bx * W)); y0 = int(round(by * H))
-            x1 = int(round((bx + bw) * W)); y1 = int(round((by + bh) * H))
+            x0 = int(round(bx * W))
+            y0 = int(round(by * H))
+            x1 = int(round((bx + bw) * W))
+            y1 = int(round((by + bh) * H))
 
-        x0, x1 = sorted((x0, x1)); y0, y1 = sorted((y0, y1))
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
         return {"ok": True}
 
 
@@ -362,42 +360,95 @@ with dai.Pipeline(device) as pipeline:
         # timed
         tcfg = payload.get("timed")
         if isinstance(tcfg, dict):
-            _snap_state["timed_enabled"] = bool(
-                tcfg.get("enabled", _snap_state["timed_enabled"])
-            )
+            if "enabled" in tcfg:
+                cond_gate.set_key_enabled("timed", bool(tcfg["enabled"]))
             if "interval" in tcfg:
                 try:
-                    _snap_state["interval"] = max(1, int(tcfg["interval"]))
+                    cond_gate.set_cooldown("timed", float(tcfg["interval"]))
                 except Exception:
                     pass
-            _snap_state["last_sent_s"] = -1.0  # restart schedule
+            if tcfg.get("reset"):
+                cond_gate.reset(["timed"])
 
         # no detections
         ncfg = payload.get("noDetections")
         if isinstance(ncfg, dict):
-            no_det_gate.set_enabled(bool(ncfg.get("enabled", no_det_gate.enabled)))
+            if "enabled" in ncfg:
+                cond_gate.set_key_enabled("no_detections", bool(ncfg["enabled"]))
+            if "cooldown" in ncfg:
+                try:
+                    cond_gate.set_cooldown("no_detections", float(ncfg["cooldown"]))
+                except Exception:
+                    pass
+            if ncfg.get("reset"):
+                cond_gate.reset(["no_detections"])
 
-        # new detections (tracker)
-        n2cfg = payload.get("newDetections")
-        if isinstance(n2cfg, dict):
-            new_on = bool(n2cfg.get("enabled", _runtime["newdet_running"]))
-            if new_on and not _runtime["newdet_running"]:
-                reset_new_detections_state()
-            snaps_newdet_producer.setRunning(new_on)
-            _runtime["newdet_running"] = new_on
-            try:
-                snaps_newdet_producer.setTimeInterval(0)
-            except Exception:
-                snaps_newdet_producer.setTimeInterval(base_dt_seconds)
+        # low confidence
+        lcfg = payload.get("lowConfidence")
+        if isinstance(lcfg, dict):
+            enable = bool(lcfg.get("enabled", False))
+            thr_raw = lcfg.get("threshold", None)
 
-        any_active = _snap_state["timed_enabled"] or no_det_gate.enabled
+            if enable:
+
+                if thr_raw is None:
+                    return {"ok": False, "reason": "low_conf_threshold_required"}
+
+                try:
+                    thr = float(thr_raw)
+                    if thr > 1.0:
+                        thr = thr / 100.0
+                    if not (0.0 <= thr <= 1.0):
+                        raise ValueError
+                except Exception:
+                    return {"ok": False, "reason": "invalid_low_conf_threshold"}
+
+                _runtime["low_conf_thresh"] = thr
+                cond_gate.set_key_enabled("low_conf", True)
+            else:
+                cond_gate.set_key_enabled("low_conf", False)
+                _runtime.pop("low_conf_thresh", None)
+
+            if "cooldown" in lcfg:
+                try:
+                    cond_gate.set_cooldown("low_conf", float(lcfg["cooldown"]))
+                except Exception:
+                    pass
+
+            if lcfg.get("reset"):
+                cond_gate.reset(["low_conf"])
+
+        # lost in middle
+        lmcfg = payload.get("lostMid")
+        if isinstance(lmcfg, dict):
+            if "enabled" in lmcfg:
+                cond_gate.set_key_enabled("lost_mid", bool(lmcfg["enabled"]))
+            if "cooldown" in lmcfg:
+                try:
+                    cond_gate.set_cooldown("lost_mid", float(lmcfg["cooldown"]))
+                except Exception:
+                    pass
+            if "margin" in lmcfg:
+                try:
+                    m = float(lmcfg["margin"])
+                    _runtime["lost_mid_margin"] = max(0.0, min(0.49, m))
+                except Exception:
+                    pass
+            if lmcfg.get("reset"):
+                cond_gate.reset(["lost_mid"])
+
+        any_active = cond_gate.enabled and (
+                cond_gate.is_key_enabled("timed")
+                or cond_gate.is_key_enabled("no_detections")
+                or cond_gate.is_key_enabled("low_conf")
+                or cond_gate.is_key_enabled("lost_mid")
+        )
         snaps_producer.setRunning(any_active)
         if any_active:
             snaps_producer.setTimeInterval(base_dt_seconds)
+
         return {"ok": True}
 
-
-    # Always register these (YOLOE-only app)
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService("Threshold Update Service", conf_threshold_update_service)
     visualizer.registerService("Image Upload Service", image_upload_service)

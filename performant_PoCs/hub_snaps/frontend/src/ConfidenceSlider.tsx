@@ -30,7 +30,7 @@ export function ConfidenceSlider({ initialValue = 0.5 }: ConfidenceSliderProps) 
     return (
         <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
             <label className={css({ fontWeight: 'medium' })}>
-                Confidence Threshold: {value.toFixed(2)}
+                Confidence Threshold: {(value * 100).toFixed(0)}%
             </label>
             <input
                 type="range"
