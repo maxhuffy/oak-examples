@@ -389,64 +389,116 @@ function App() {
                     Define classes via text prompts or image crops, adjust confidence, and visualize results live.
                 </p>
 
-                {/* Confidence Slider */}
-                <ConfidenceSlider initialValue={initialConfidence} />
-
-                {/* Class Input */}
-                <ClassSelector
-                initialClasses={initialClasses}
-                onClassesUpdated={handleTextClassesUpdated}
-                />
-
-
-                {/* Image Uploader */}
-                <ImageUploader
-                    onDrawBBox={handleBeginBBoxDrawAttempt}
-                    getNextLabel={getNextObjectLabel}
-                    onImagePromptAdded={(label) => {
-                        setImagePromptCount((c: number) => Math.min(MAX_IMAGE_PROMPTS, c + 1));
-                        setImagePromptLabels((prev) => {
-                            const updated = [...prev, label];
-                            lastCommittedImageLabelsRef.current = updated;
-                            return updated;
-                        });
-                    }}
-                    maxReached={imagePromptCount >= MAX_IMAGE_PROMPTS}
-                />
-
-                <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
-                    <span className={css({ color: 'gray.600', fontSize: 'sm' })}>
-                        ⓘ Maximum of {MAX_IMAGE_PROMPTS} image prompts.
-                    </span>
-                    <Button
-                        variant="outline"
-                        onClick={handleResetImagePrompts}
-                        disabled={imagePromptCount === 0} // 🔹 Disable when no prompts
-                    >
-                        Reset Image Prompts
-                    </Button>
+                {/* Parameters-dependent section */}
+                {!paramsLoaded ? (
+                <div
+                className={css({
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "md",
+                    paddingY: "lg",
+                    color: "gray.700",
+                    })}
+                >
+                    {/* Spinner */}
+                    <div
+                    className={css({
+                        width: "5",
+                        height: "5",
+                        border: "3px solid",
+                        borderColor: "gray.300",
+                        borderTopColor: "blue.500",
+                        borderRadius: "full",
+                        animation: "spin 0.8s linear infinite",
+                    })}
+                    />
+                    <span>Loading parameters from device…</span>
                 </div>
+                ) : (
+                <>
 
-                {imagePromptLabels.length > 0 && (
+                    {/* Confidence Slider */}
+                    <ConfidenceSlider initialValue={initialConfidence} />
+
+                    {/* Class Input */}
+                    <ClassSelector
+                    initialClasses={initialClasses}
+                    onClassesUpdated={handleTextClassesUpdated}
+                    />
+
+
+                    {/* Image Uploader */}
+                    <ImageUploader
+                        onDrawBBox={handleBeginBBoxDrawAttempt}
+                        getNextLabel={getNextObjectLabel}
+                        onImagePromptAdded={(label) => {
+                            setImagePromptCount((c: number) => Math.min(MAX_IMAGE_PROMPTS, c + 1));
+                            setImagePromptLabels((prev) => {
+                                const updated = [...prev, label];
+                                lastCommittedImageLabelsRef.current = updated;
+                                return updated;
+                            });
+                        }}
+                        maxReached={imagePromptCount >= MAX_IMAGE_PROMPTS}
+                    />
+
                     <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
-                        <h3 className={css({ fontWeight: 'semibold' })}>Image Prompt Labels</h3>
-                        <span className={css({ color: 'gray.600', fontSize: 'xs' })}>Press Enter or click away to save. Press Esc to cancel.</span>
-                        {imagePromptLabels.map((lbl, idx) => (
-                            <div key={idx} className={css({ display: 'flex', gap: 'sm', alignItems: 'center' })}>
-                                <span className={css({ fontSize: 'sm', color: 'gray.600' })}>#{idx + 1}</span>
-                                <input
-                                    className={css({ flex: 1, border: '1px solid', borderColor: 'gray.300', borderRadius: 'sm', padding: 'xs' })}
-                                    value={lbl}
-                                    onChange={(e) => {
-                                        const newLabel = e.target.value.trim();
-                                        setImagePromptLabels((prev) => prev.map((v, i) => (i === idx ? newLabel : v)));
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            const newLabel = (imagePromptLabels[idx] || '').trim();
-                                            if (!newLabel) {
-                                                notify('Label cannot be empty', { type: 'warning' });
+                        <span className={css({ color: 'gray.600', fontSize: 'sm' })}>
+                            ⓘ Maximum of {MAX_IMAGE_PROMPTS} image prompts.
+                        </span>
+                        <Button
+                            variant="outline"
+                            onClick={handleResetImagePrompts}
+                            disabled={imagePromptCount === 0} // 🔹 Disable when no prompts
+                        >
+                            Reset Image Prompts
+                        </Button>
+                    </div>
+
+                    {imagePromptLabels.length > 0 && (
+                        <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
+                            <h3 className={css({ fontWeight: 'semibold' })}>Image Prompt Labels</h3>
+                            <span className={css({ color: 'gray.600', fontSize: 'xs' })}>Press Enter or click away to save. Press Esc to cancel.</span>
+                            {imagePromptLabels.map((lbl, idx) => (
+                                <div key={idx} className={css({ display: 'flex', gap: 'sm', alignItems: 'center' })}>
+                                    <span className={css({ fontSize: 'sm', color: 'gray.600' })}>#{idx + 1}</span>
+                                    <input
+                                        className={css({ flex: 1, border: '1px solid', borderColor: 'gray.300', borderRadius: 'sm', padding: 'xs' })}
+                                        value={lbl}
+                                        onChange={(e) => {
+                                            const newLabel = e.target.value.trim();
+                                            setImagePromptLabels((prev) => prev.map((v, i) => (i === idx ? newLabel : v)));
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                const newLabel = (imagePromptLabels[idx] || '').trim();
+                                                if (!newLabel) {
+                                                    notify('Label cannot be empty', { type: 'warning' });
+                                                    setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
+                                                    return;
+                                                }
+                                                if (!connection.connected) {
+                                                    notify('Not connected to device. Unable to rename.', { type: 'error' });
+                                                    setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
+                                                    return;
+                                                }
+                                                const payload = { index: idx, newLabel } as any;
+                                                // @ts-ignore - Custom service
+                                                (connection as any).daiConnection?.postToService('Rename Image Prompt Service', payload, () => {
+                                                    lastCommittedImageLabelsRef.current = [...imagePromptLabels];
+                                                    notify(`Renamed image prompt #${idx + 1} to "${newLabel}"`, { type: 'success', durationMs: 3000 });
+                                                });
+                                            } else if (e.key === 'Escape') {
                                                 setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            const newLabel = (imagePromptLabels[idx] || '').trim();
+                                            if (!newLabel || newLabel === lastCommittedImageLabelsRef.current[idx]) {
+                                                // empty or unchanged: revert or ignore
+                                                if (!newLabel) setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
                                                 return;
                                             }
                                             if (!connection.connected) {
@@ -460,57 +512,35 @@ function App() {
                                                 lastCommittedImageLabelsRef.current = [...imagePromptLabels];
                                                 notify(`Renamed image prompt #${idx + 1} to "${newLabel}"`, { type: 'success', durationMs: 3000 });
                                             });
-                                        } else if (e.key === 'Escape') {
-                                            setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
-                                        }
-                                    }}
-                                    onBlur={() => {
-                                        const newLabel = (imagePromptLabels[idx] || '').trim();
-                                        if (!newLabel || newLabel === lastCommittedImageLabelsRef.current[idx]) {
-                                            // empty or unchanged: revert or ignore
-                                            if (!newLabel) setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
-                                            return;
-                                        }
-                                        if (!connection.connected) {
-                                            notify('Not connected to device. Unable to rename.', { type: 'error' });
-                                            setImagePromptLabels([...lastCommittedImageLabelsRef.current]);
-                                            return;
-                                        }
-                                        const payload = { index: idx, newLabel } as any;
-                                        // @ts-ignore - Custom service
-                                        (connection as any).daiConnection?.postToService('Rename Image Prompt Service', payload, () => {
-                                            lastCommittedImageLabelsRef.current = [...imagePromptLabels];
-                                            notify(`Renamed image prompt #${idx + 1} to "${newLabel}"`, { type: 'success', durationMs: 3000 });
-                                        });
-                                    }}
-                                />
-                                <Button
-                                    variant="ghost"
-                                    onClick={() => {
-                                        if (!connection.connected) {
-                                            notify('Not connected to device. Unable to delete.', { type: 'error' });
-                                            return;
-                                        }
-                                        // @ts-ignore - Custom service
-                                        (connection as any).daiConnection?.postToService('Delete Image Prompt Service', { index: idx }, () => {
-                                            setImagePromptLabels((prev) => {
-                                                const updated = prev.filter((_, i) => i !== idx);
-                                                lastCommittedImageLabelsRef.current = [...updated];
-                                                return updated;
+                                        }}
+                                    />
+                                    <Button
+                                        variant="ghost"
+                                        onClick={() => {
+                                            if (!connection.connected) {
+                                                notify('Not connected to device. Unable to delete.', { type: 'error' });
+                                                return;
+                                            }
+                                            // @ts-ignore - Custom service
+                                            (connection as any).daiConnection?.postToService('Delete Image Prompt Service', { index: idx }, () => {
+                                                setImagePromptLabels((prev) => {
+                                                    const updated = prev.filter((_, i) => i !== idx);
+                                                    lastCommittedImageLabelsRef.current = [...updated];
+                                                    return updated;
+                                                });
+                                                setImagePromptCount((c: number) => Math.max(0, c - 1));
+                                                notify(`Deleted image prompt #${idx + 1}`, { type: 'success', durationMs: 2500 });
                                             });
-                                            setImagePromptCount((c: number) => Math.max(0, c - 1));
-                                            notify(`Deleted image prompt #${idx + 1}`, { type: 'success', durationMs: 2500 });
-                                        });
-                                    }}
-                                >
-                                    Delete
-                                </Button>
-                            </div>
-                        ))}
-                    </div>
+                                        }}
+                                    >
+                                        Delete
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </>
                 )}
-
-                
 
                 {/* Connection Status */}
                 <div className={css({
