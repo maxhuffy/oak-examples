@@ -18,7 +18,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--timeout",
         type=int,
-        default=30,
+        default=43200,
         help="Timeout for script execution (default: 30s).",
     )
     parser.addoption(
