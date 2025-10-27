@@ -1,3 +1,4 @@
+import { Flex, Button, Input } from "@luxonis/common-fe-components";
 import { css } from "../styled-system/css/css.mjs";
 import { useRef, useState } from "react";
 import { useConnection } from "@luxonis/depthai-viewer-common";
@@ -9,76 +10,80 @@ interface ClassSelectorProps {
 }
 
 export function ClassSelector({ initialClasses = [], onClassesUpdated }: ClassSelectorProps) {
-  const connection = useConnection();
-  const { notify } = useNotifications();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [classes, setClasses] = useState<string[]>(initialClasses);
+  const connection = useConnection();
+  const [selectedClasses, setSelectedClasses] = useState<string[]>(initialClasses);
+  const { notify } = useNotifications();
 
-  const handleCommit = () => {
-    if (!inputRef.current) return;
+  const handleSendMessage = () => {
+    if (inputRef.current) {
+      const value = inputRef.current.value;
+      const updatedClasses = value
+        .split(",")
+        .map((c: string) => c.trim())
+        .filter(Boolean);
 
-    const value = inputRef.current.value;
-    const updated = value
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean);
-
-    if (updated.length === 0) {
-      notify("Please enter at least one class (comma separated).", {
-        type: "warning",
-        durationMs: 5000,
-      });
-      return;
-    }
-
-    if (!connection.connected) {
-      notify("Not connected to device. Unable to update classes.", {
-        type: "error",
-      });
-      return;
-    }
-
-    console.log("Sending class update to backend:", updated);
-    notify(`Updating ${updated.length} class${updated.length > 1 ? "es" : ""}…`, {
-      type: "info",
-    });
-
-    connection.daiConnection?.postToService(
-      // @ts-ignore - Custom service
-      "Class Update Service",
-      updated,
-      () => {
-        console.log("Backend acknowledged class update");
-        setClasses(updated);
-        onClassesUpdated?.(updated);
-        notify(`Classes updated (${updated.join(", ")})`, {
-          type: "success",
-          durationMs: 6000,
+      if (updatedClasses.length === 0) {
+        notify("Please enter at least one class (comma separated).", {
+          type: "warning",
+          durationMs: 5000,
         });
+        return;
       }
-    );
+      if (!connection.connected) {
+        notify("Not connected to device. Unable to update classes.", {
+          type: "error",
+        });
+        return;
+      }
 
-    inputRef.current.value = "";
+      console.log("Sending new class list to backend:", updatedClasses);
+      notify(
+        `Updating ${updatedClasses.length} class${
+          updatedClasses.length > 1 ? "es" : ""
+        }…`,
+        { type: "info" }
+      );
+
+      connection.daiConnection?.postToService(
+        // @ts-ignore - Custom service
+        "Class Update Service",
+        updatedClasses,
+        () => {
+          console.log("Backend acknowledged class update");
+          setSelectedClasses(updatedClasses);
+          notify(`Classes updated (${updatedClasses.join(", ")})`, {
+            type: "success",
+            durationMs: 6000,
+          });
+          onClassesUpdated?.(updatedClasses);
+        }
+      );
+
+      inputRef.current.value = "";
+    }
   };
 
   return (
-    <div className={css({ display: "flex", flexDirection: "column", gap: "xs" })}>
-      <label className={css({ fontWeight: "medium" })}>Tracked Classes:</label>
+    <div className={css({ display: "flex", flexDirection: "column", gap: "sm" })}>
+      {/* Class List Display */}
+      <h3 className={css({ fontWeight: "semibold" })}>
+        Update Classes with Text Input:
+      </h3>
 
-      {/* Current classes display */}
       <div
         className={css({
+          maxHeight: "150px",
+          overflowY: "auto",
           border: "1px solid token(colors.border.subtle)",
           borderRadius: "md",
-          backgroundColor: "token(colors.bg.surface)",
           padding: "sm",
-          maxHeight: "120px",
-          overflowY: "auto",
+          backgroundColor: "token(colors.bg.surface)",
         })}
       >
-        {classes.length > 0 ? (
+        {selectedClasses.length > 0 ? (
           <ul className={css({ listStyle: "disc", pl: "lg", m: 0 })}>
-            {classes.map((cls, i) => (
+            {selectedClasses.map((cls, i) => (
               <li key={i}>{cls}</li>
             ))}
           </ul>
@@ -87,40 +92,11 @@ export function ClassSelector({ initialClasses = [], onClassesUpdated }: ClassSe
         )}
       </div>
 
-      {/* Input field */}
-      <input
-        ref={inputRef}
-        type="text"
-        placeholder="person,chair,TV"
-        onKeyDown={(e) => e.key === "Enter" && handleCommit()}
-        className={css({
-          border: "1px solid token(colors.border.subtle)",
-          borderRadius: "md",
-          paddingX: "sm",
-          paddingY: "xs",
-          fontSize: "sm",
-          backgroundColor: "token(colors.bg.input)",
-        })}
-      />
-
-      {/* Update button */}
-      <button
-        onClick={handleCommit}
-        className={css({
-          mt: "xs",
-          paddingY: "xs",
-          borderRadius: "md",
-          backgroundColor: "blue.500",
-          color: "white",
-          fontWeight: "medium",
-          border: "none",
-          cursor: "pointer",
-          _hover: { backgroundColor: "blue.600" },
-          transition: "background-color 0.15s ease",
-        })}
-      >
-        Update Classes
-      </button>
+      {/* Input + Button */}
+      <Flex direction="row" gap="sm" alignItems="center">
+        <Input type="text" placeholder="person,chair,TV" ref={inputRef} />
+        <Button onClick={handleSendMessage}>Update&nbsp;Classes</Button>
+      </Flex>
     </div>
   );
 }

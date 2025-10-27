@@ -51,23 +51,6 @@ function App() {
         });
     }, [connection.connected, connection.daiConnection, notify]);
 
-    if (!paramsLoaded) {
-        return (
-            <main className={css({
-                width: 'screen',
-                height: 'screen',
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                fontSize: 'lg',
-                color: 'gray.600',
-            })}>
-                Loading initial parameters…
-            </main>
-        );
-    }
-
-
     const getNextObjectLabel = useCallback((): string | null => {
         if (imagePromptCount >= MAX_IMAGE_PROMPTS) {
             notify(`Maximum of ${MAX_IMAGE_PROMPTS} image prompts reached. Delete some before adding more.`, { type: 'warning', durationMs: 6000 });
