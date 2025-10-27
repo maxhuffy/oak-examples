@@ -23,10 +23,8 @@ from utils.helper_functions import (
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
 from utils.frame_cache_node import FrameCacheNode
-from utils.snap_utils import (
-    custom_snap_process,
-    ConditionsGate,
-)
+from utils.snap_utils.conditions_gate import ConditionsGate
+from utils.snap_utils.custon_snap_process import custom_snap_process
 
 load_dotenv(override=True)
 
