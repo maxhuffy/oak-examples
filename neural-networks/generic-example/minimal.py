@@ -27,12 +27,9 @@ with dai.Pipeline(device) as pipeline:
     qNNData = neuralNetwork.out.createOutputQueue()
 
     print("Pipeline created")
-
     pipeline.start()
 
 
     while pipeline.isRunning():
         inNNData: dai.NNData = qNNData.get()
         tensor = inNNData.getFirstTensor()
-        assert(isinstance(tensor, np.ndarray))
-        print(f"Received NN data: {tensor.shape}")
