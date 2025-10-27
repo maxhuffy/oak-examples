@@ -1,70 +1,38 @@
-import { css } from "../styled-system/css/css.mjs";
 import { useState } from "react";
 import { useConnection } from "@luxonis/depthai-viewer-common";
+import { SliderControl } from "./inputs/SliderControl";
 
 interface ConfidenceSliderProps {
-    initialValue?: number;
+  initialValue?: number;        // defaults to 0.5
+  disabled?: boolean;
 }
 
-export function ConfidenceSlider({ initialValue = 0.5 }: ConfidenceSliderProps) {
-    const connection = useConnection();
-    const [value, setValue] = useState(initialValue);
+export function ConfidenceSlider({ initialValue = 0.5, disabled }: ConfidenceSliderProps) {
+  const connection = useConnection();
+  const [value, setValue] = useState(initialValue);
 
-    const handleCommit = () => {
-        if (typeof value === "number" && !isNaN(value)) {
-            console.log('Sending threshold to backend:', value);
+  const handleCommit = (v: number) => {
+    if (Number.isFinite(v)) {
+      connection.daiConnection?.postToService(
+        // @ts-ignore - Custom service
+        "Threshold Update Service",
+        v,
+        (resp: any) => console.log("[ConfidenceSlider] BE ack:", resp)
+      );
+    }
+  };
 
-            connection.daiConnection?.postToService(
-                // @ts-ignore - Custom service
-                "Threshold Update Service",
-                value,
-                (response: any) => {
-                    console.log('Backend acknowledged threshold update:', response);
-                }
-            );
-        } else {
-            console.warn("Invalid value, skipping update:", value);
-        }
-    };
-
-    return (
-        <div className={css({ display: 'flex', flexDirection: 'column', gap: 'xs' })}>
-            <label className={css({ fontWeight: 'medium' })}>
-                Confidence Threshold: {(value * 100).toFixed(0)}%
-            </label>
-            <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={value}
-                onChange={(e) => setValue(parseFloat(e.target.value))}
-                onMouseUp={handleCommit}
-                onTouchEnd={handleCommit}
-                className={css({
-                    width: '100%',
-                    appearance: 'none',
-                    height: '4px',
-                    borderRadius: 'full',
-                    backgroundColor: 'gray.300',
-                    '&::-webkit-slider-thumb': {
-                        appearance: 'none',
-                        width: '12px',
-                        height: '12px',
-                        borderRadius: 'full',
-                        backgroundColor: 'blue.500',
-                        cursor: 'pointer',
-                    },
-                    '&::-moz-range-thumb': {
-                        appearance: 'none',
-                        width: '12px',
-                        height: '12px',
-                        borderRadius: 'full',
-                        backgroundColor: 'blue.500',
-                        cursor: 'pointer',
-                    }
-                })}
-            />
-        </div>
-    );
+  return (
+    <SliderControl
+      label={`Confidence Threshold: ${(value * 100).toFixed(0)}%`}
+      value={value}
+      onChange={setValue}
+      onCommit={handleCommit}
+      min={0}
+      max={1}
+      step={0.01}
+      disabled={disabled}
+      aria-label="Confidence threshold"
+    />
+  );
 }

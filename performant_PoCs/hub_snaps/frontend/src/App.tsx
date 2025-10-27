@@ -3,7 +3,7 @@ import { Streams, useConnection } from "@luxonis/depthai-viewer-common";
 import { ClassSelector } from "./ClassSelector.tsx";
 import { ConfidenceSlider } from "./ConfidenceSlider.tsx";
 import { ImageUploader } from "./ImageUploader.tsx";
-import { SnapCollectionButton } from "./SnapCollectionButton.tsx";
+import { SnapConditionsPanel } from "./SnapConditionsPanel.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotifications } from "./Notifications.tsx";
 
@@ -297,7 +297,7 @@ function App() {
         >
           <h2 className={css({ fontSize: "lg", fontWeight: "semibold", mb: "1" })}>Snap conditions</h2>
           <p className={css({ fontSize: "xs", color: "gray.600", mb: "sm", lineHeight: "snug" })}>Choose when to auto-capture a snap.</p>
-          <SnapCollectionButton />
+          <SnapConditionsPanel />
         </div>
 
         <div
