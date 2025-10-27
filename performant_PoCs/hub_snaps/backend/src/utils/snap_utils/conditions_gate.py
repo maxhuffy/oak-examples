@@ -37,7 +37,7 @@ class ConditionsGate:
                 self.last_sent.pop(str(k), None)
 
     def is_key_enabled(self, key: str) -> bool:
-        return self.key_enabled.get(str(key), True)
+        return self.key_enabled.get(str(key), False)
 
     def get_cooldown(self, key: str) -> float:
         return self.cooldowns.get(str(key), self.default_cooldown_s)

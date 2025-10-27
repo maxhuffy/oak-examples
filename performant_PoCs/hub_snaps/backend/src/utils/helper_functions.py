@@ -10,10 +10,6 @@ QUANT_ZERO_POINT = 90.0
 QUANT_SCALE = 0.003925696481
 
 QUANT_VALUES = {
-    "yolo-world": {
-        "quant_zero_point": 90.0,
-        "quant_scale": 0.003925696481,
-    },
     "yoloe": {
         "quant_zero_point": 174.0,
         "quant_scale": 0.003328413470,
@@ -26,7 +22,7 @@ QUANT_VALUES = {
 
 
 def pad_and_quantize_features(
-    features, max_num_classes=80, model_name="yolo-world", precision="int8"
+    features, max_num_classes=80, model_name="yoloe", precision="int8"
 ):
     """
     Pad features to (1, 512, max_num_classes) and quantize if precision is int8.
@@ -48,7 +44,7 @@ def pad_and_quantize_features(
 
 
 def extract_text_embeddings(
-    class_names, max_num_classes=80, model_name="yolo-world", precision="int8"
+    class_names, max_num_classes=80, model_name="yoloe", precision="int8"
 ):
     tokenizer_json_path = download_tokenizer(
         url="https://huggingface.co/openai/clip-vit-base-patch32/resolve/main/tokenizer.json",
@@ -62,58 +58,34 @@ def extract_text_embeddings(
 
     text_onnx = np.array([e.ids for e in encodings], dtype=np.int64)
 
-    if model_name == "yolo-world":
-        attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
-
-        textual_onnx_model_path = download_model(
-            "https://huggingface.co/jmzzomg/clip-vit-base-patch32-text-onnx/resolve/main/model.onnx",
-            "clip_textual_hf.onnx",
+    if text_onnx.shape[1] < 77:
+        text_onnx = np.pad(
+            text_onnx, ((0, 0), (0, 77 - text_onnx.shape[1])), mode="constant"
         )
 
-        session_textual = onnxruntime.InferenceSession(
-            textual_onnx_model_path,
-            providers=[
-                "TensorrtExecutionProvider",
-                "CUDAExecutionProvider",
-                "CPUExecutionProvider",
-            ],
-        )
-        textual_output = session_textual.run(
-            None,
-            {
-                session_textual.get_inputs()[0].name: text_onnx,
-                "attention_mask": attention_mask,
-            },
-        )[0]
-    elif model_name == "yoloe":
-        if text_onnx.shape[1] < 77:
-            text_onnx = np.pad(
-                text_onnx, ((0, 0), (0, 77 - text_onnx.shape[1])), mode="constant"
-            )
+    textual_onnx_model_path = download_model(
+        "https://huggingface.co/Xenova/mobileclip_blt/resolve/main/onnx/text_model.onnx",
+        "mobileclip_textual_hf.onnx",
+    )
 
-        textual_onnx_model_path = download_model(
-            "https://huggingface.co/Xenova/mobileclip_blt/resolve/main/onnx/text_model.onnx",
-            "mobileclip_textual_hf.onnx",
-        )
+    session_textual = onnxruntime.InferenceSession(
+        textual_onnx_model_path,
+        providers=[
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ],
+    )
+    textual_output = session_textual.run(
+        None,
+        {
+            session_textual.get_inputs()[0].name: text_onnx,
+        },
+    )[0]
 
-        session_textual = onnxruntime.InferenceSession(
-            textual_onnx_model_path,
-            providers=[
-                "TensorrtExecutionProvider",
-                "CUDAExecutionProvider",
-                "CPUExecutionProvider",
-            ],
-        )
-        textual_output = session_textual.run(
-            None,
-            {
-                session_textual.get_inputs()[0].name: text_onnx,
-            },
-        )[0]
-
-        textual_output /= np.linalg.norm(
-            textual_output, ord=2, axis=-1, keepdims=True
-        )  # Normalize the output
+    textual_output /= np.linalg.norm(
+        textual_output, ord=2, axis=-1, keepdims=True
+    )
 
     text_features = pad_and_quantize_features(
         textual_output, max_num_classes, model_name, precision
@@ -127,28 +99,19 @@ def extract_text_embeddings(
 def extract_image_prompt_embeddings(
     image,
     max_num_classes=80,
-    model_name="yolo-world",
+    model_name="yoloe",
     mask_prompt=None,
     precision="int8",
 ):
-    # Select model and preprocess accordingly
-    if model_name == "yoloe":
-        image_resized = cv2.resize(image, (640, 640))
-        image_array = image_resized.astype(np.float32) / 255.0
-        image_array = np.transpose(image_array, (2, 0, 1))
-        input_tensor = np.expand_dims(image_array, axis=0).astype(np.float32)
-        model_url = (
-            "https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/resolve/main/"
-            "yoloe-v8l-seg_visual_encoder.onnx"
-        )
-        model_path = "yoloe-v8l-seg_visual_encoder.onnx"
-    else:
-        input_tensor = preprocess_image(image)
-        model_url = (
-            "https://huggingface.co/sokovninn/clip-visual-with-projector/resolve/main/"
-            "clip_visual_with_projector.onnx"
-        )
-        model_path = "clip_visual_with_projector.onnx"
+    image_resized = cv2.resize(image, (640, 640))
+    image_array = image_resized.astype(np.float32) / 255.0
+    image_array = np.transpose(image_array, (2, 0, 1))
+    input_tensor = np.expand_dims(image_array, axis=0).astype(np.float32)
+    model_url = (
+        "https://huggingface.co/sokovninn/yoloe-v8l-seg-visual-encoder/resolve/main/"
+        "yoloe-v8l-seg_visual_encoder.onnx"
+    )
+    model_path = "yoloe-v8l-seg_visual_encoder.onnx"
 
     onnx_model_path = download_model(model_url, model_path)
 
@@ -161,26 +124,22 @@ def extract_image_prompt_embeddings(
         ],
     )
 
-    if model_name == "yoloe":
-        if mask_prompt is None:
-            prompts = np.zeros((1, 1, 80, 80), dtype=np.float32)
-            prompts[0, 0, 5:75, 5:75] = 1.0
-        else:
-            prompts = np.asarray(mask_prompt, dtype=np.float32)
-            if prompts.ndim == 2:
-                if prompts.shape != (80, 80):
-                    prompts = cv2.resize(
-                        prompts, (80, 80), interpolation=cv2.INTER_NEAREST
-                    )
-                prompts = prompts[None, None, :, :]
-            elif prompts.shape == (1, 1, 80, 80):
-                pass
-            else:
-                raise ValueError("mask_prompt must have shape (80,80) or (1,1,80,80)")
-        outputs = session.run(None, {"images": input_tensor, "prompts": prompts})
+    if mask_prompt is None:
+        prompts = np.zeros((1, 1, 80, 80), dtype=np.float32)
+        prompts[0, 0, 5:75, 5:75] = 1.0
     else:
-        input_name = session.get_inputs()[0].name
-        outputs = session.run(None, {input_name: input_tensor})
+        prompts = np.asarray(mask_prompt, dtype=np.float32)
+        if prompts.ndim == 2:
+            if prompts.shape != (80, 80):
+                prompts = cv2.resize(
+                    prompts, (80, 80), interpolation=cv2.INTER_NEAREST
+                )
+            prompts = prompts[None, None, :, :]
+        elif prompts.shape == (1, 1, 80, 80):
+            pass
+        else:
+            raise ValueError("mask_prompt must have shape (80,80) or (1,1,80,80)")
+    outputs = session.run(None, {"images": input_tensor, "prompts": prompts})
 
     image_embeddings = outputs[0].squeeze(0).reshape(1, -1)
     image_features = pad_and_quantize_features(
@@ -245,3 +204,10 @@ def base64_to_cv2_image(base64_data_uri: str):
     np_arr = np.frombuffer(binary_data, np.uint8)
     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     return img
+
+
+def make_dummy_features(max_num_classes: int, model_name: str, precision: str):
+    if precision == "fp16":
+        return np.zeros((1, 512, max_num_classes), dtype=np.float16)
+    qzp = int(round(QUANT_VALUES.get(model_name, {}).get("quant_zero_point", 0)))
+    return np.full((1, 512, max_num_classes), qzp, dtype=np.uint8)

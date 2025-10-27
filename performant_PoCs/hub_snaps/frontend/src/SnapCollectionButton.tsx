@@ -12,46 +12,47 @@ export function SnapCollectionButton() {
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // --- helpers for validation/state ---
+  // helpers for validation
   const hasTooManyDecimals = (s: string) => /\.\d{2,}$/.test(s.trim());
   const oneDecimalOrInt = (s: string) => /^\d+(\.\d{0,1})?$/.test(s.trim());
   const asFloat = (s: string) => Number.parseFloat(s.trim());
 
-  // timing (minutes, allow one decimal; default 5.0)
+  // timing cooldown (minutes, one decimal; default 5.0)
   const [timingEnabled, setTimingEnabled] = useState(false);
   const [timeIntervalStr, setTimeIntervalStr] = useState("5.0");
   const timeIntervalMin = useMemo(() => asFloat(timeIntervalStr), [timeIntervalStr]);
   const timeIntervalValid =
-    (!timingEnabled) ||
+    !timingEnabled ||
     (timeIntervalStr !== "" && oneDecimalOrInt(timeIntervalStr) && Number.isFinite(timeIntervalMin) && timeIntervalMin > 0);
 
-  // no detections (minutes, allow one decimal)
+  // no detections (minutes, one decimal; default 5.0)
   const [noDetEnabled, setNoDetEnabled] = useState(false);
-  const [noDetCooldownStr, setNoDetCooldownStr] = useState("15.0");
+  const [noDetCooldownStr, setNoDetCooldownStr] = useState("5.0");
   const noDetCooldownMin = useMemo(() => asFloat(noDetCooldownStr), [noDetCooldownStr]);
   const noDetCooldownValid =
-    (!noDetEnabled) ||
+    !noDetEnabled ||
     (noDetCooldownStr !== "" && oneDecimalOrInt(noDetCooldownStr) && Number.isFinite(noDetCooldownMin) && noDetCooldownMin >= 0);
 
-  // low confidence (cooldown minutes, allow one decimal; threshold unchanged)
+  // low confidence (cooldown minutes, one decimal; threshold unchanged; default 5.0)
   const [lowConfEnabled, setLowConfEnabled] = useState(false);
-  const [lowConfCooldownStr, setLowConfCooldownStr] = useState("15.0");
+  const [lowConfCooldownStr, setLowConfCooldownStr] = useState("5.0");
   const lowConfCooldownMin = useMemo(() => asFloat(lowConfCooldownStr), [lowConfCooldownStr]);
   const lowConfCooldownValid =
-    (!lowConfEnabled) ||
+    !lowConfEnabled ||
     (lowConfCooldownStr !== "" && oneDecimalOrInt(lowConfCooldownStr) && Number.isFinite(lowConfCooldownMin) && lowConfCooldownMin >= 0);
   const [lowConfThreshold, setLowConfThreshold] = useState(0.30); // slider 0..1
 
-  // lost in middle (cooldown minutes, allow one decimal; margin unchanged)
+  // lost in middle (cooldown minutes, one decimal; edge buffer in PERCENT 0..49, default 20%)
   const [lostMidEnabled, setLostMidEnabled] = useState(false);
-  const [lostMidCooldownStr, setLostMidCooldownStr] = useState("15.0");
+  const [lostMidCooldownStr, setLostMidCooldownStr] = useState("5.0");
   const lostMidCooldownMin = useMemo(() => asFloat(lostMidCooldownStr), [lostMidCooldownStr]);
   const lostMidCooldownValid =
-    (!lostMidEnabled) ||
+    !lostMidEnabled ||
     (lostMidCooldownStr !== "" && oneDecimalOrInt(lostMidCooldownStr) && Number.isFinite(lostMidCooldownMin) && lostMidCooldownMin >= 0);
-  const [lostMidMarginStr, setLostMidMarginStr] = useState("0.20"); // fraction 0..0.49
-  const lostMidMargin = useMemo(() => Number.parseFloat(lostMidMarginStr), [lostMidMarginStr]);
-  const lostMidMarginValid = !Number.isNaN(lostMidMargin) && lostMidMargin >= 0 && lostMidMargin <= 0.49;
+
+  const [lostMidMarginPctStr, setLostMidMarginPctStr] = useState("20"); // percent 0..49
+  const lostMidMarginPct = useMemo(() => Number.parseFloat(lostMidMarginPctStr), [lostMidMarginPctStr]);
+  const lostMidMarginValid = Number.isFinite(lostMidMarginPct) && lostMidMarginPct >= 0 && lostMidMarginPct <= 49;
 
   const anyInvalid =
     !timeIntervalValid || !noDetCooldownValid || !lowConfCooldownValid || !lostMidCooldownValid || !lostMidMarginValid;
@@ -67,8 +68,9 @@ export function SnapCollectionButton() {
     });
   };
 
-  // compose full payload when starting/stopping (convert minutes -> seconds)
+  // compose payload (convert minutes -> seconds; margin percent -> fraction)
   const postConfig = (runFlag: boolean) => {
+    const marginFrac = Math.max(0, Math.min(49, lostMidMarginPct || 0)) / 100;
     const payload = runFlag
       ? {
           timed: {
@@ -90,7 +92,7 @@ export function SnapCollectionButton() {
             ? {
                 enabled: true,
                 cooldown: lostMidCooldownMin * 60,
-                margin: lostMidMargin,
+                margin: marginFrac,
               }
             : { enabled: false },
         }
@@ -108,10 +110,9 @@ export function SnapCollectionButton() {
     });
   };
 
-  // live-update lowConfidence while running (minutes -> seconds)
+  // live updates
   const pushLowConfUpdate = () => {
-    if (!connection.connected || !running || !lowConfEnabled) return;
-    if (!lowConfCooldownValid) return;
+    if (!connection.connected || !running || !lowConfEnabled || !lowConfCooldownValid) return;
     postToService({
       lowConfidence: {
         enabled: true,
@@ -121,20 +122,18 @@ export function SnapCollectionButton() {
     });
   };
 
-  // live-update lostMid while running (minutes -> seconds)
   const pushLostMidUpdate = () => {
-    if (!connection.connected || !running || !lostMidEnabled) return;
-    if (!lostMidMarginValid || !lostMidCooldownValid) return;
+    if (!connection.connected || !running || !lostMidEnabled || !lostMidCooldownValid || !lostMidMarginValid) return;
+    const marginFrac = Math.max(0, Math.min(49, lostMidMarginPct || 0)) / 100;
     postToService({
       lostMid: {
         enabled: true,
         cooldown: lostMidCooldownMin * 60,
-        margin: lostMidMargin,
+        margin: marginFrac,
       },
     });
   };
 
-  // warn on blur if too many decimals
   const warnIfTooManyDecimals = (label: string, value: string) => {
     if (value.trim() !== "" && hasTooManyDecimals(value)) {
       notify(`${label} allows at most one decimal place.`, { type: "warning" });
@@ -173,7 +172,7 @@ export function SnapCollectionButton() {
           return;
         }
         if (!lostMidMarginValid) {
-          notify("Margin must be a number between 0.00 and 0.49.", { type: "error" });
+          notify("Edge buffer must be between 0% and 49%.", { type: "error" });
           return;
         }
       }
@@ -227,12 +226,7 @@ export function SnapCollectionButton() {
                   px: "sm",
                   py: "xs",
                   borderWidth: "1px",
-                  borderColor:
-                    disabledControls
-                      ? "gray.300"
-                      : timeIntervalValid
-                      ? "gray.300"
-                      : "red.500",
+                  borderColor: disabledControls ? "gray.300" : timeIntervalValid ? "gray.300" : "red.500",
                   rounded: "md",
                   _disabled: { bg: "gray.100", color: "gray.500", cursor: "not-allowed" },
                 })}
@@ -289,12 +283,7 @@ export function SnapCollectionButton() {
                   px: "sm",
                   py: "xs",
                   borderWidth: "1px",
-                  borderColor:
-                    disabledControls
-                      ? "gray.300"
-                      : noDetCooldownValid
-                      ? "gray.300"
-                      : "red.500",
+                  borderColor: disabledControls ? "gray.300" : noDetCooldownValid ? "gray.300" : "red.500",
                   rounded: "md",
                   _disabled: { bg: "gray.100", color: "gray.500", cursor: "not-allowed" },
                 })}
@@ -390,12 +379,7 @@ export function SnapCollectionButton() {
                   px: "sm",
                   py: "xs",
                   borderWidth: "1px",
-                  borderColor:
-                    disabledControls
-                      ? "gray.300"
-                      : lowConfCooldownValid
-                      ? "gray.300"
-                      : "red.500",
+                  borderColor: disabledControls ? "gray.300" : lowConfCooldownValid ? "gray.300" : "red.500",
                   rounded: "md",
                   _disabled: { bg: "gray.100", color: "gray.500", cursor: "not-allowed" },
                 })}
@@ -437,32 +421,28 @@ export function SnapCollectionButton() {
           </p>
 
           <label className={css({ display: "flex", flexDirection: "column", gap: "xs" })}>
-            <span className={css({ fontWeight: "medium" })}>Edge buffer (each side) — 0.00–0.49</span>
+            <span className={css({ fontWeight: "medium" })}>Edge buffer (each side) — 0–49%</span>
             <input
               type="number"
               min={0}
-              max={0.49}
-              step={0.01}
-              inputMode="decimal"
-              value={lostMidMarginStr}
-              onChange={(e) => setLostMidMarginStr(e.target.value)}
+              max={49}
+              step={1}
+              inputMode="numeric"
+              pattern="\\d*"
+              value={lostMidMarginPctStr}
+              onChange={(e) => setLostMidMarginPctStr(e.target.value)}
               onBlur={pushLostMidUpdate}
               disabled={disabledControls}
               className={css({
                 px: "sm",
                 py: "xs",
                 borderWidth: "1px",
-                borderColor:
-                  disabledControls
-                    ? "gray.300"
-                    : lostMidMarginValid
-                    ? "gray.300"
-                    : "red.500",
+                borderColor: disabledControls ? "gray.300" : lostMidMarginValid ? "gray.300" : "red.500",
                 rounded: "md",
                 _disabled: { bg: "gray.100", color: "gray.500", cursor: "not-allowed" },
               })}
               aria-invalid={!lostMidMarginValid && !disabledControls}
-              aria-label="Lost-in-middle margin (0.00–0.49)"
+              aria-label="Lost-in-middle edge buffer percent (0–49)"
             />
             <span className={css({ fontSize: "xs", color: "gray.600" })}>
               We ignore the outer margin on every edge; only losses inside the remaining center fire snaps.
@@ -480,7 +460,9 @@ export function SnapCollectionButton() {
                 value={lostMidCooldownStr}
                 onChange={(e) => setLostMidCooldownStr(e.target.value)}
                 onBlur={() => {
-                  warnIfTooManyDecimals("Lost-in-middle cooldown", lostMidCooldownStr);
+                  if (lostMidCooldownStr.trim() !== "" && hasTooManyDecimals(lostMidCooldownStr)) {
+                    notify("Lost-in-middle cooldown allows at most one decimal place.", { type: "warning" });
+                  }
                   pushLostMidUpdate();
                 }}
                 disabled={disabledControls}
@@ -489,12 +471,7 @@ export function SnapCollectionButton() {
                   px: "sm",
                   py: "xs",
                   borderWidth: "1px",
-                  borderColor:
-                    disabledControls
-                      ? "gray.300"
-                      : lostMidCooldownValid
-                      ? "gray.300"
-                      : "red.500",
+                  borderColor: disabledControls ? "gray.300" : lostMidCooldownValid ? "gray.300" : "red.500",
                   rounded: "md",
                   _disabled: { bg: "gray.100", color: "gray.500", cursor: "not-allowed" },
                 })}

@@ -19,7 +19,7 @@ from utils.helper_functions import (
     extract_text_embeddings,
     extract_image_prompt_embeddings,
     base64_to_cv2_image,
-    QUANT_VALUES,
+    make_dummy_features
 )
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
@@ -53,14 +53,6 @@ if platform != "RVC4":
     raise ValueError("This example is supported only on RVC4 platform")
 
 frame_type = dai.ImgFrame.Type.BGR888i
-
-
-def make_dummy_features(max_num_classes: int, model_name: str, precision: str):
-    if precision == "fp16":
-        return np.zeros((1, 512, max_num_classes), dtype=np.float16)
-    qzp = int(round(QUANT_VALUES.get(model_name, {}).get("quant_zero_point", 0)))
-    return np.full((1, 512, max_num_classes), qzp, dtype=np.uint8)
-
 
 text_features = extract_text_embeddings(
     class_names=CLASS_NAMES,
@@ -97,7 +89,6 @@ with dai.Pipeline(device) as pipeline:
     model_nn_archive = dai.NNArchive(dai.getModelFromZoo(model_description))
     model_w, model_h = model_nn_archive.getInputSize()
 
-    # media/camera input at high resolution for visualization
     if args.media_path:
         replay = pipeline.create(dai.node.ReplayVideo)
         replay.setReplayVideoFile(Path(args.media_path))
@@ -145,11 +136,9 @@ with dai.Pipeline(device) as pipeline:
     textInputQueue = nn_with_parser.inputs["texts"].createInputQueue()
     nn_with_parser.inputs["texts"].setReusePreviousMessage(True)
 
-    # YOLOE always uses image_prompts input (we feed dummy by default)
     imagePromptInputQueue = nn_with_parser.inputs["image_prompts"].createInputQueue()
     nn_with_parser.inputs["image_prompts"].setReusePreviousMessage(True)
 
-    # filter and rename detection labels
     det_process_filter = pipeline.create(ImgDetectionsFilter).build(nn_with_parser.out)
     annotation_node = pipeline.create(AnnotationNode).build(
         det_process_filter.out,
@@ -158,7 +147,6 @@ with dai.Pipeline(device) as pipeline:
 
     filtered_bridge = pipeline.create(ImgDetectionsBridge).build(det_process_filter.out)
 
-    # Cache last frame for services that need full frame content
     frame_cache = pipeline.create(FrameCacheNode).build(video_src_out)
 
     cond_gate = ConditionsGate(default_cooldown_s=0.0, enabled=True)
@@ -349,7 +337,6 @@ with dai.Pipeline(device) as pipeline:
         x0, x1 = sorted((x0, x1))
         y0, y1 = sorted((y0, y1))
         return {"ok": True}
-
 
     def snap_collection_service(payload):
         base_dt_seconds = 1

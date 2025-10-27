@@ -64,7 +64,6 @@ def custom_snap_process(
             is_lost_now = _status_is_lost(t)
             is_tracked_now = _status_is_tracked(t)
 
-            # Fire only on TRACKED -> LOST transition
             if is_lost_now and was_tracked_prev:
                 rc = _roi_center_area_norm(t)
                 if rc is not None:
