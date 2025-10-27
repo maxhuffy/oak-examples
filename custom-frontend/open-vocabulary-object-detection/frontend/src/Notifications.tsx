@@ -55,10 +55,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 function Toast({ notification, onClose, index }: { notification: Notification; onClose: () => void; index: number }) {
     const { message, type } = notification;
     const colorMap: Record<NonNullable<Notification["type"]>, { bg: string; border: string; text: string }> = {
-        info: { bg: "blue.100", border: "blue.400", text: "blue.900" },
-        success: { bg: "green.100", border: "green.400", text: "green.900" },
-        warning: { bg: "yellow.100", border: "yellow.400", text: "yellow.900" },
-        error: { bg: "red.100", border: "red.400", text: "red.900" },
+        info: { bg: "white", border: "blue.400", text: "blue.900" },
+        success: { bg: "white", border: "green.400", text: "green.900" },
+        warning: { bg: "white", border: "yellow.400", text: "yellow.900" },
+        error: { bg: "white", border: "red.400", text: "red.900" },
     };
     const colors = colorMap[type ?? "info"];
 

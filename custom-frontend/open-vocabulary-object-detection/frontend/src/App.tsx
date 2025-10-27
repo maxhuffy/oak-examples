@@ -9,18 +9,64 @@ import { Button } from "@luxonis/common-fe-components";
 
 function App() {
     const connection = useConnection();
+    const { notify } = useNotifications();
+
+    const [initialConfidence, setInitialConfidence] = useState<number>(0.1);
+    const [initialClasses, setInitialClasses] = useState<string[]>(["person", "chair", "TV"]);
+    const [paramsLoaded, setParamsLoaded] = useState(false);
+
     const streamContainerRef = useRef<HTMLDivElement>(null);
     const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
     const [currentRect, setCurrentRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-    const { notify } = useNotifications();
 
     const MAX_IMAGE_PROMPTS = 5;
     const [imagePromptCount, setImagePromptCount] = useState(0);
     const [imagePromptLabels, setImagePromptLabels] = useState<string[]>([]);
     const lastCommittedImageLabelsRef = useRef<string[]>([]);
     const [textClasses, setTextClasses] = useState<string[]>(["person", "chair", "TV"]);
+
+    useEffect(() => {
+        if (!connection.connected) return;
+        console.log("[Init] Requesting current params from backend…");
+
+        // @ts-ignore - Custom service
+        connection.daiConnection?.postToService("Get Current Params Service", {}, (response: any) => {
+            console.log("[Init] Received current params:", response);
+
+            if (response?.confidence_threshold != null) {
+                setInitialConfidence(response.confidence_threshold);
+            }
+            if (Array.isArray(response?.class_names)) {
+                setInitialClasses(response.class_names);
+                setTextClasses(response.class_names);
+            }
+
+            notify("Fetched initial parameters from backend", {
+                type: "success",
+                durationMs: 3000,
+            });
+            setParamsLoaded(true);
+        });
+    }, [connection.connected, connection.daiConnection, notify]);
+
+    if (!paramsLoaded) {
+        return (
+            <main className={css({
+                width: 'screen',
+                height: 'screen',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                fontSize: 'lg',
+                color: 'gray.600',
+            })}>
+                Loading initial parameters…
+            </main>
+        );
+    }
+
 
     const getNextObjectLabel = useCallback((): string | null => {
         if (imagePromptCount >= MAX_IMAGE_PROMPTS) {
@@ -361,10 +407,14 @@ function App() {
                 </p>
 
                 {/* Confidence Slider */}
-                <ConfidenceSlider initialValue={0.1} />
+                <ConfidenceSlider initialValue={initialConfidence} />
 
                 {/* Class Input */}
-                <ClassSelector onClassesUpdated={handleTextClassesUpdated} />
+                <ClassSelector
+                initialClasses={initialClasses}
+                onClassesUpdated={handleTextClassesUpdated}
+                />
+
 
                 {/* Image Uploader */}
                 <ImageUploader

@@ -200,6 +200,13 @@ with dai.Pipeline(device) as pipeline:
 
     visualizer.addTopic("Detections", annotation_node.out)
 
+    def get_current_params_service() -> dict[str, any]:
+        """Returns current parameters used"""
+        return {
+            "confidence_threshold": CONFIDENCE_THRESHOLD,
+            "class_names": CLASS_NAMES,
+        }
+
     def class_update_service(new_classes: list[str]):
         """Changes classes to detect based on the user input"""
         if len(new_classes) == 0:
@@ -673,6 +680,7 @@ with dai.Pipeline(device) as pipeline:
             )
         return {"ok": True, "bbox": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}}
 
+    visualizer.registerService("Get Current Params Service", get_current_params_service)
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService(
         "Threshold Update Service", conf_threshold_update_service
