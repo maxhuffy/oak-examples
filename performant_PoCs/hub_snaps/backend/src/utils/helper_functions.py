@@ -83,9 +83,7 @@ def extract_text_embeddings(
         },
     )[0]
 
-    textual_output /= np.linalg.norm(
-        textual_output, ord=2, axis=-1, keepdims=True
-    )
+    textual_output /= np.linalg.norm(textual_output, ord=2, axis=-1, keepdims=True)
 
     text_features = pad_and_quantize_features(
         textual_output, max_num_classes, model_name, precision
@@ -131,9 +129,7 @@ def extract_image_prompt_embeddings(
         prompts = np.asarray(mask_prompt, dtype=np.float32)
         if prompts.ndim == 2:
             if prompts.shape != (80, 80):
-                prompts = cv2.resize(
-                    prompts, (80, 80), interpolation=cv2.INTER_NEAREST
-                )
+                prompts = cv2.resize(prompts, (80, 80), interpolation=cv2.INTER_NEAREST)
             prompts = prompts[None, None, :, :]
         elif prompts.shape == (1, 1, 80, 80):
             pass

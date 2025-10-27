@@ -1,5 +1,4 @@
 from pathlib import Path
-import numpy as np
 from dotenv import load_dotenv
 import os
 from functools import partial
@@ -19,7 +18,7 @@ from utils.helper_functions import (
     extract_text_embeddings,
     extract_image_prompt_embeddings,
     base64_to_cv2_image,
-    make_dummy_features
+    make_dummy_features,
 )
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
@@ -230,7 +229,9 @@ with dai.Pipeline(device) as pipeline:
             print("List of new classes empty, skipping.")
             return
         if len(new_classes) > MAX_NUM_CLASSES:
-            print(f"Too many classes ({len(new_classes)}) > {MAX_NUM_CLASSES}, skipping.")
+            print(
+                f"Too many classes ({len(new_classes)}) > {MAX_NUM_CLASSES}, skipping."
+            )
             return
 
         feats = extract_text_embeddings(
@@ -243,18 +244,26 @@ with dai.Pipeline(device) as pipeline:
         nn_txt.addTensor(
             "texts",
             feats,
-            dataType=(dai.TensorInfo.DataType.FP16 if args.precision == "fp16"
-                      else dai.TensorInfo.DataType.U8F),
+            dataType=(
+                dai.TensorInfo.DataType.FP16
+                if args.precision == "fp16"
+                else dai.TensorInfo.DataType.U8F
+            ),
         )
         textInputQueue.send(nn_txt)
 
-        dummy = make_dummy_features(MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision)
+        dummy = make_dummy_features(
+            MAX_NUM_CLASSES, model_name="yoloe", precision=args.precision
+        )
         nn_img = dai.NNData()
         nn_img.addTensor(
             "image_prompts",
             dummy,
-            dataType=(dai.TensorInfo.DataType.FP16 if args.precision == "fp16"
-                      else dai.TensorInfo.DataType.U8F),
+            dataType=(
+                dai.TensorInfo.DataType.FP16
+                if args.precision == "fp16"
+                else dai.TensorInfo.DataType.U8F
+            ),
         )
         imagePromptInputQueue.send(nn_img)
 
@@ -377,7 +386,6 @@ with dai.Pipeline(device) as pipeline:
             thr_raw = lcfg.get("threshold", None)
 
             if enable:
-
                 if thr_raw is None:
                     return {"ok": False, "reason": "low_conf_threshold_required"}
 
@@ -425,10 +433,10 @@ with dai.Pipeline(device) as pipeline:
                 cond_gate.reset(["lost_mid"])
 
         any_active = cond_gate.enabled and (
-                cond_gate.is_key_enabled("timed")
-                or cond_gate.is_key_enabled("no_detections")
-                or cond_gate.is_key_enabled("low_conf")
-                or cond_gate.is_key_enabled("lost_mid")
+            cond_gate.is_key_enabled("timed")
+            or cond_gate.is_key_enabled("no_detections")
+            or cond_gate.is_key_enabled("low_conf")
+            or cond_gate.is_key_enabled("lost_mid")
         )
         snaps_producer.setRunning(any_active)
         if any_active:
@@ -437,7 +445,9 @@ with dai.Pipeline(device) as pipeline:
         return {"ok": True}
 
     visualizer.registerService("Class Update Service", class_update_service)
-    visualizer.registerService("Threshold Update Service", conf_threshold_update_service)
+    visualizer.registerService(
+        "Threshold Update Service", conf_threshold_update_service
+    )
     visualizer.registerService("Image Upload Service", image_upload_service)
     visualizer.registerService("BBox Prompt Service", bbox_prompt_service)
     visualizer.registerService("Snap Collection Service", snap_collection_service)

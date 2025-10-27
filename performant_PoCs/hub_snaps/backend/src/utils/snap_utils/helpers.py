@@ -32,8 +32,14 @@ def _label_idx_name(tracklet, class_names: List[str]) -> Tuple[int, str]:
     return idx, name
 
 
-def _send_snap(name: str, producer: SnapsProducer, frame: dai.ImgFrame, tags: List[str], extras: dict,
-               detections: dai.ImgDetections = None) -> bool:
+def _send_snap(
+    name: str,
+    producer: SnapsProducer,
+    frame: dai.ImgFrame,
+    tags: List[str],
+    extras: dict,
+    detections: dai.ImgDetections = None,
+) -> bool:
     return producer.sendSnap(name, frame, detections, tags, extras)
 
 
@@ -59,7 +65,8 @@ def _roi_center_area_norm(t) -> Optional[Tuple[float, float, float]]:
     roi = getattr(t, "roi", None)
     if roi is not None:
         try:
-            tl = roi.topLeft(); br = roi.bottomRight()
+            tl = roi.topLeft()
+            br = roi.bottomRight()
             x0, y0, x1, y1 = float(tl.x), float(tl.y), float(br.x), float(br.y)
             cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
             return cx, cy, max(0.0, (x1 - x0) * (y1 - y0))
@@ -69,6 +76,7 @@ def _roi_center_area_norm(t) -> Optional[Tuple[float, float, float]]:
     if d is not None:
         x = float(getattr(d, "x", getattr(d, "xmin", 0.0)))
         y = float(getattr(d, "y", getattr(d, "ymin", 0.0)))
-        w = float(getattr(d, "width", 0.0)); h = float(getattr(d, "height", 0.0))
-        return x + 0.5*w, y + 0.5*h, max(0.0, w*h)
+        w = float(getattr(d, "width", 0.0))
+        h = float(getattr(d, "height", 0.0))
+        return x + 0.5 * w, y + 0.5 * h, max(0.0, w * h)
     return None

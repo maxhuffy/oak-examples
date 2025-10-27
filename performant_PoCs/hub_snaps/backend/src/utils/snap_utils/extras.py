@@ -11,7 +11,7 @@ def build_extras(
 ) -> dict[str, str]:
     dets = getattr(det_data, "detections", None) or []
     labels = [getattr(d, "label", -1) for d in dets[:20]]
-    confs  = [getattr(d, "confidence", 0.0) for d in dets[:20]]
+    confs = [getattr(d, "confidence", 0.0) for d in dets[:20]]
 
     extras: dict = {
         "model": model,
@@ -22,11 +22,17 @@ def build_extras(
 
     if isinstance(det_data, dai.ImgDetections):
         xyxy = [
-            (getattr(d, "xmin", 0.0), getattr(d, "ymin", 0.0),
-             getattr(d, "xmax", 0.0), getattr(d, "ymax", 0.0))
+            (
+                getattr(d, "xmin", 0.0),
+                getattr(d, "ymin", 0.0),
+                getattr(d, "xmax", 0.0),
+                getattr(d, "ymax", 0.0),
+            )
             for d in dets[:10]
         ]
-        extras["detection_xyxy"] = ";".join(f"{x1:.3f},{y1:.3f},{x2:.3f},{y2:.3f}" for x1, y1, x2, y2 in xyxy)
+        extras["detection_xyxy"] = ";".join(
+            f"{x1:.3f},{y1:.3f},{x2:.3f},{y2:.3f}" for x1, y1, x2, y2 in xyxy
+        )
         names = []
         if dets:
             for d in dets[:20]:
@@ -42,7 +48,9 @@ def build_extras(
                 cxcywh.append((c.x, c.y, s.width, s.height))
             except Exception:
                 pass
-        extras["detection_cxcywh"] = ";".join(f"{cx:.3f},{cy:.3f},{w:.3f},{h:.3f}" for cx, cy, w, h in cxcywh)
+        extras["detection_cxcywh"] = ";".join(
+            f"{cx:.3f},{cy:.3f},{w:.3f},{h:.3f}" for cx, cy, w, h in cxcywh
+        )
         names = []
         for d in dets[:20]:
             try:
