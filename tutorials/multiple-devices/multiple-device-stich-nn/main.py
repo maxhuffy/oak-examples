@@ -46,7 +46,7 @@ with contextlib.ExitStack() as stack:
 
     nn_with_parser = pipeline.create(ParsingNeuralNetwork).build(stitched.out, "luxonis/yolov6-nano:r2-coco-512x288")
 
-    visualizer.addTopic("Background blur", stitched.out)
+    visualizer.addTopic("Stitched", stitched.out)
     visualizer.addTopic("NN detections", nn_with_parser.out)
     visualizer.addTopic("Raw video", outputs[0])
 

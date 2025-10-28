@@ -68,7 +68,6 @@ class Stitch(dai.node.ThreadedHostNode):
 
     def run(self):
         while self.isRunning():
-            """TODO add description"""
             images = []
             for input in self.inputs:
                 input_frame = input.get()  # get the frame from input
