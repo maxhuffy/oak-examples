@@ -14,9 +14,16 @@ The system processes high-resolution camera input, intelligently crops detected 
 
 For optimal results, use devices with autofocus capabilities or ensure barcodes are positioned at the camera's fixed focal distance.
 
+## Recommended Devices
+
+We recommend using **OAK4-CS** for this example. Its **global-shutter** color sensor is best for fast-moving conveyor belts, reducing motion blur and rolling-shutter artifacts that can cause missed or incorrect decodes.
+
+The application will also run on **OAK4-S** and **OAK4-D** devices. For rolling-shutter or fixed-focus variants, keep barcodes near the best-focus distance and ensure good lighting to maximize decoding reliability. See the notice above regarding fixed-focus cameras.
+
 ## Demo
 
-![Demo](example/barcode_demo.gif)  
+![Demo](media/barcode_demo.gif)
+
 > **Note:** The stream may appear purplish because the OAK4-CS lacks an IR-cut filter.
 
 ## Usage
@@ -43,11 +50,13 @@ Here is a list of all available parameters:
 Install libraries:
 
 **Ubuntu:**
+
 ```bash
 sudo apt-get update && apt-get install -y libzbar0 libzbar-dev
 ```
 
 **macOS:**
+
 ```bash
 brew install zbar
 ```
@@ -68,6 +77,7 @@ Running in peripheral mode requires a host computer and there will be communicat
 ### Examples
 
 Start the demo:
+
 ```bash
 python3 main.py
 ```
@@ -99,4 +109,3 @@ oakctl app run .
 ```
 
 This will run the example with default argument values. If you want to change these values you need to edit the `oakapp.toml` file (refer [here](https://docs.luxonis.com/software-v3/oak-apps/configuration/) for more information about this configuration file).
-
