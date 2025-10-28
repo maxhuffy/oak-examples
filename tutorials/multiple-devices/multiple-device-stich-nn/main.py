@@ -59,3 +59,7 @@ with contextlib.ExitStack() as stack:
         if key == ord("q"):
             print("Got q key from the remote connection!")
             break
+        if key == ord("r"):
+            print("Got r key from the remote connection, redoing homography")
+            stitched.unregister_cameras()
+
