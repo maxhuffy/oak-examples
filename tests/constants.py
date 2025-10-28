@@ -24,7 +24,7 @@ KNOWN_FAILING = {
         "reason": "Failed to start the HTTP server on peripheral.",
         "mode": "all",
     },
-    "custom-frontend/dynamic-yolo-world": {
+    "custom-frontend/open-vocabulary-object-detection": {
         "reason": "Not supported for peripheral",
         "mode": ["peripheral"],
     },
@@ -49,10 +49,6 @@ KNOWN_FAILING = {
         "reason": "Needs thermal camera",
         "platform": "all",
     },
-    "neural-networks/counting/depth-people-counting": {
-        "reason": "Pipeline node with name: 'ObjectTracker' doesn't exist",
-        "platform": ["rvc4"],
-    },
     "neural-networks/depth-estimation/foundation-stereo": {
         "reason": "Requires a lot of host compute to run",
         "mode": ["standalone"],
@@ -61,6 +57,10 @@ KNOWN_FAILING = {
         "reason": "Missing token, please set DEPTHAI_HUB_API_KEY environment variable or use setToken method - Needs to be set by the user.",
         "mode": "all",
         "platform": "all",
+    },
+    "depth-measurement/3d-measurement/tof-pointcloud": {
+        "reason": "ToF cameras are only of the RVC2 variant",
+        "platform": ["rvc4"],
     },
     "depth-measurement/triangulation": {
         "reason": "Can't sync outputs inside Triangulation node",
