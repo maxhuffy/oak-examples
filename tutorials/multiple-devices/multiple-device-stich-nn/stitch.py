@@ -54,28 +54,30 @@ class VideoStitcher(Stitcher):
         return self.create_final_panorama()
 
 class Stitch(dai.node.ThreadedHostNode):
-    def __init__(self) -> None:
+    def __init__(self, nr_inputs: int) -> None:
         super().__init__()
-        self.input_frame1 = self.createInput()
-        self.input_frame2 = self.createInput()
+        self.inputs = []
+        for _ in range(0, nr_inputs):
+            self.inputs.append(self.createInput())
         self.out = self.createOutput()
         self.stitcher = VideoStitcher()
 
-    def unregister_cameras(self):
+    def recalculate_homography(self):
         self.stitcher.unregister_cameras()
         return
 
     def run(self):
         while self.isRunning():
             """TODO add description"""
+            images = []
+            for input in self.inputs:
+                input_frame = input.get()  # get the frame from input
+                assert isinstance(input_frame, dai.ImgFrame)  # assert that it has correct type
+                images.append(input_frame.getCvFrame())
 
-            input_frame1 = self.input_frame1.get()
-            input_frame2 = self.input_frame2.get()
-
-            assert isinstance(input_frame1, dai.ImgFrame)
-            assert isinstance(input_frame2, dai.ImgFrame)
-
-            images = [input_frame1.getCvFrame(), input_frame2.getCvFrame()]
+            if len(images) < 2:
+                print(f"There should be at lest 2 frames for stitching.")
+                break
     
             try:
                 stitched = self.stitcher.stitch(images)

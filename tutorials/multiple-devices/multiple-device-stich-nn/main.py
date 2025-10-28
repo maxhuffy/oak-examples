@@ -40,9 +40,9 @@ with contextlib.ExitStack() as stack:
 
         outputs.append(output)
 
-    stitched = pipeline.create(Stitch)
-    outputs[0].link(stitched.input_frame1)
-    outputs[1].link(stitched.input_frame2)
+    stitched = pipeline.create(Stitch, len(outputs))
+    for i, output in enumerate(outputs):
+        output.link(stitched.inputs[i])
 
     nn_with_parser = pipeline.create(ParsingNeuralNetwork).build(stitched.out, "luxonis/yolov6-nano:r2-coco-512x288")
 
@@ -54,6 +54,7 @@ with contextlib.ExitStack() as stack:
         p.start()
     visualizer.registerPipeline(pipelines[0])
     
+    print("Press 'r' in visualizer to recalculate homography")
     while pipeline.isRunning():
         key = visualizer.waitKey(1)
         if key == ord("q"):
@@ -61,5 +62,5 @@ with contextlib.ExitStack() as stack:
             break
         if key == ord("r"):
             print("Got r key from the remote connection, redoing homography")
-            stitched.unregister_cameras()
+            stitched.recalculate_homography()
 
