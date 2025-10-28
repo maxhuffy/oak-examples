@@ -1,4 +1,4 @@
-# Conveyor Application - Barcode Detection
+# Barcode Detection on Conveyor Belt
 
 This example demonstrates how to detect and decode barcodes in real-time using computer vision. The application is designed for conveyor belt applications where barcodes need to be detected and decoded from video streams. It uses a [barcode detection model](https://models.luxonis.com/luxonis/barcode-detection/75edea0f-79c9-4091-a48c-f81424b3ccab) for detecting barcode regions and combines multiple decoding strategies (pyzbar and zxing-cpp) to ensure robust barcode recognition across various formats and conditions.
 
