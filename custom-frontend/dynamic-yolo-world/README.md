@@ -38,8 +38,8 @@ This example supports two different YOLO models:
 Before running the example you’ll need to first build the frontend. Follow these steps:
 
 1. Install FE dependencies: `cd frontend/ && npm i`
-1. Build the FE: `npm run build`
-1. Move back to origin directory: `cd ..`
+2. Build the FE: `npm run build`
+3. Move back to origin directory: `cd ..`
 
 ## Standalone Mode (RVC4 only)
 
@@ -60,4 +60,4 @@ This will run the example with default argument values (YOLO-World model). If yo
 ### Remote access
 
 1. You can upload oakapp to Luxonis Hub via oakctl
-1. And then you can just remotly open App UI via App detail
+2. And then you can just remotly open App UI via App detail
