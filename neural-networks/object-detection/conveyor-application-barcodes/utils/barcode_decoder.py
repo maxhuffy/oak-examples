@@ -4,12 +4,14 @@ from PIL import Image
 from pyzbar.pyzbar import decode
 import cv2
 
+
 class BarcodeDecoder(dai.node.ThreadedHostNode):
     """
     Custom host node that receives ImgFrame messages,
     runs pyzbar (plus optional fallbacks), and emits raw bytes
     in dai.Buffer messages.
     """
+
     def __init__(self):
         super().__init__()
 
@@ -25,7 +27,7 @@ class BarcodeDecoder(dai.node.ThreadedHostNode):
             if in_msg is None:
                 time.sleep(0.001)
                 continue
-                
+
             cv_frame = in_msg.getCvFrame()
             pil_img = Image.fromarray(cv2.cvtColor(cv_frame, cv2.COLOR_BGR2RGB))
 
@@ -47,7 +49,6 @@ class BarcodeDecoder(dai.node.ThreadedHostNode):
                 buf = dai.Buffer()
                 buf.setData(bc.data)
                 self.output.send(buf)
-                
 
             if not barcodes:
                 time.sleep(0.001)

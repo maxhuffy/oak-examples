@@ -38,7 +38,7 @@ class CropConfigsCreator(dai.node.HostNode):
                 dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImageManipConfig, True)
             ]
         )
-        
+
         self.detections_output = self.createOutput(
             possibleDatatypes=[
                 dai.Node.DatatypeHierarchy(dai.DatatypeEnum.Buffer, True)
@@ -196,7 +196,9 @@ class CropConfigsCreator(dai.node.HostNode):
         cfg.setSequenceNum(sequence_num)
         send_status = False
         attempts = 0
-        while not send_status and attempts < 100:  # Limit attempts to prevent infinite loop
+        while (
+            not send_status and attempts < 100
+        ):  # Limit attempts to prevent infinite loop
             send_status = self.config_output.trySend(cfg)
             if not send_status:
                 attempts += 1
@@ -219,12 +221,14 @@ class CropConfigsCreator(dai.node.HostNode):
 
             send_status = False
             attempts = 0
-            while not send_status and attempts < 100:  # Limit attempts to prevent infinite loop
+            while (
+                not send_status and attempts < 100
+            ):  # Limit attempts to prevent infinite loop
                 send_status = self.config_output.trySend(cfg)
                 if not send_status:
                     attempts += 1
                     time.sleep(0.001)  # Small delay to prevent busy waiting
-        
+
         self.detections_output.send(detections_msg)
 
     def _convert_to_extended(

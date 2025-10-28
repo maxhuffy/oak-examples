@@ -83,15 +83,15 @@ def non_max_suppression(
     pred_candidates = prediction[..., 4] > conf_thres  # candidates
 
     # Check the parameters.
-    assert (
-        num_classes == num_classes_check
-    ), f"Number of classes {num_classes} does not match the model {num_classes_check}"
-    assert (
-        0 <= conf_thres <= 1
-    ), f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
-    assert (
-        0 <= iou_thres <= 1
-    ), f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
+    assert num_classes == num_classes_check, (
+        f"Number of classes {num_classes} does not match the model {num_classes_check}"
+    )
+    assert 0 <= conf_thres <= 1, (
+        f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
+    )
+    assert 0 <= iou_thres <= 1, (
+        f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
+    )
 
     output = [np.zeros((0, 6 + nm))] * prediction.shape[0]
 

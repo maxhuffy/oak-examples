@@ -45,7 +45,7 @@ with dai.Pipeline(device) as pipeline:
             replay.setFps(args.fps_limit)
     else:
         cam = pipeline.create(dai.node.Camera).build()
-        
+
         cam_out = cam.requestOutput((2592, 1944), frame_type, fps=args.fps_limit)
     input_node = replay.out if args.media_path else cam_out
 
@@ -81,10 +81,12 @@ with dai.Pipeline(device) as pipeline:
     decoder = pipeline.create(BarcodeDecoder)
     crop_manip.out.link(decoder.input)
 
-    barcode_overlay = pipeline.create(SimpleBarcodeOverlay).build(decoder.output,resize_node.out, detection_nn.out)
-    
+    barcode_overlay = pipeline.create(SimpleBarcodeOverlay).build(
+        decoder.output, resize_node.out, detection_nn.out
+    )
+
     visualizer.addTopic("Barcode Overlay", barcode_overlay.output)
-    
+
     pipeline.run()
 
     while True:

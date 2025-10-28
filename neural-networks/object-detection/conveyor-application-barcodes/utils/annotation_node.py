@@ -37,10 +37,15 @@ class AnnotationNode(dai.node.ThreadedHostNode):
             for img_detection_extended_msg, msg_group in zip(
                 img_detections_extended_msg.detections, msg_group_list
             ):
-                xmin, ymin, xmax, ymax = img_detection_extended_msg.rotated_rect.getOuterRect()
+                xmin, ymin, xmax, ymax = (
+                    img_detection_extended_msg.rotated_rect.getOuterRect()
+                )
 
                 try:
-                    xmin = float(xmin); ymin = float(ymin); xmax = float(xmax); ymax = float(ymax)
+                    xmin = float(xmin)
+                    ymin = float(ymin)
+                    xmax = float(xmax)
+                    ymax = float(ymax)
                 except Exception:
                     pass
 

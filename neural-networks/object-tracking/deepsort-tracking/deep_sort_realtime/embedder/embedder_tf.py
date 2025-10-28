@@ -67,9 +67,9 @@ class MobileNetv2_Embedder(object):
         if model_wts_path is None:
             model_wts_path = MOBILENETV2_BOTTLENECK_WTS
         model_wts_path = Path(model_wts_path)
-        assert (
-            model_wts_path.is_file()
-        ), f"Mobilenetv2 model path {model_wts_path} does not exists!"
+        assert model_wts_path.is_file(), (
+            f"Mobilenetv2 model path {model_wts_path} does not exists!"
+        )
 
         self.model = get_mobilenetv2_with_preproc(wts=model_wts_path)
 
