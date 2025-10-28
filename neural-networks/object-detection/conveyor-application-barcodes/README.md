@@ -16,8 +16,8 @@ For optimal results, use devices with autofocus capabilities or ensure barcodes 
 
 ## Demo
 
-![Demo](example/barcode_demo.gif) 
-"*Note: The stream may appear purpleish, because there is no IR filter on OAK4-CS"
+![Demo](example/barcode_demo.gif)  
+> **Note:** The stream may appear purplish because the OAK4-CS lacks an IR-cut filter.
 
 ## Usage
 
