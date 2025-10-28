@@ -1,7 +1,6 @@
 depthai == 3.0.0rc4
-depthai-nodes
-numpy
-opencv-python
-pyzbar
-Pillow
-zxing-cpp
+depthai-nodes == 0.3.4
+numpy >= 1.22
+opencv-python-headless ~= 4.10.0
+pyzbar == 0.1.9
+Pillow == 12.0.0

@@ -1,29 +1,11 @@
 from pathlib import Path
 import depthai as dai
 from depthai_nodes.node import ParsingNeuralNetwork
+
 from utils.arguments import initialize_argparser
 from utils.simple_barcode_overlay import SimpleBarcodeOverlay
 from utils.barcode_decoder import BarcodeDecoder
-
-import numpy as np  # ensure numpy available for perspective transform
-from PIL import Image
-from pyzbar.pyzbar import decode, ZBarSymbol
-from PIL import ImageOps  # for color inversion
-import cv2  # for zxing-cpp fallback
-try:
-    import zxingcpp  # robust orientable decoder
-except ImportError:
-    zxingcpp = None
-
-from collections import deque
-import threading
-import time
-import os
-from datetime import datetime
-
 from utils.host_crop_config_creator import CropConfigsCreator
-
-DET_MODEL: str = "luxonis/barcode-detection:768x576"
 
 _, args = initialize_argparser()
 
@@ -45,10 +27,14 @@ if not args.fps_limit:
 with dai.Pipeline(device) as pipeline:
     print("Creating pipeline...")
 
-    det_model_description = dai.NNModelDescription(DET_MODEL)
-    det_model_description.platform = platform
-    det_nn_archive = dai.NNArchive(dai.getModelFromZoo(det_model_description))
-
+    model_description = dai.NNModelDescription.fromYamlFile(
+        f"barcode-detection.{platform}.yaml"
+    )
+    nn_archive = dai.NNArchive(
+        dai.getModelFromZoo(
+            model_description,
+        )
+    )
 
     if args.media_path:
         replay = pipeline.create(dai.node.ReplayVideo)
@@ -65,18 +51,18 @@ with dai.Pipeline(device) as pipeline:
 
     resize_node = pipeline.create(dai.node.ImageManip)
     resize_node.setMaxOutputFrameSize(
-        det_nn_archive.getInputWidth() * det_nn_archive.getInputHeight() * 3
+        nn_archive.getInputWidth() * nn_archive.getInputHeight() * 3
     )
     resize_node.initialConfig.setOutputSize(
-        det_nn_archive.getInputWidth(),
-        det_nn_archive.getInputHeight(),
+        nn_archive.getInputWidth(),
+        nn_archive.getInputHeight(),
         mode=dai.ImageManipConfig.ResizeMode.STRETCH,
     )
     resize_node.initialConfig.setFrameType(frame_type)
     input_node.link(resize_node.inputImage)
 
     detection_nn: ParsingNeuralNetwork = pipeline.create(ParsingNeuralNetwork).build(
-        resize_node.out, det_nn_archive
+        resize_node.out, nn_archive
     )
 
     crop_code = pipeline.create(CropConfigsCreator).build(
@@ -95,9 +81,13 @@ with dai.Pipeline(device) as pipeline:
     decoder = pipeline.create(BarcodeDecoder)
     crop_manip.out.link(decoder.input)
 
-    # Create simple barcode overlay that shows decoded barcodes and detection boxes on video
     barcode_overlay = pipeline.create(SimpleBarcodeOverlay).build(decoder.output,resize_node.out, detection_nn.out)
+    
+    visualizer.addTopic("Barcode Overlay", barcode_overlay.output)
     
     pipeline.run()
 
-    cv2.destroyAllWindows()
+    while True:
+        key = visualizer.waitKey(1)
+        if key == ord("q"):
+            break

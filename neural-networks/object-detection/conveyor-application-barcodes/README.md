@@ -1,6 +1,6 @@
 # Conveyor Application - Barcode Detection
 
-This example demonstrates how to detect and decode barcodes in real-time using computer vision. The application is designed for conveyor belt applications where barcodes need to be detected and decoded from video streams. It uses a [barcode detection model](https://models.luxonis.com/luxonis/barcode-detection/768x576) for detecting barcode regions and combines multiple decoding strategies (pyzbar and zxing-cpp) to ensure robust barcode recognition across various formats and conditions.
+This example demonstrates how to detect and decode barcodes in real-time using computer vision. The application is designed for conveyor belt applications where barcodes need to be detected and decoded from video streams. It uses a [barcode detection model](https://models.luxonis.com/luxonis/barcode-detection/75edea0f-79c9-4091-a48c-f81424b3ccab) for detecting barcode regions and combines multiple decoding strategies (pyzbar and zxing-cpp) to ensure robust barcode recognition across various formats and conditions.
 
 The system processes high-resolution camera input, intelligently crops detected barcode regions, and applies multiple fallback decoding strategies including rotation and color inversion to maximize recognition success rates.
 
@@ -16,7 +16,8 @@ For optimal results, use devices with autofocus capabilities or ensure barcodes 
 
 ## Demo
 
-![Demo](example/barcode_demo.gif)
+![Demo](example/barcode_demo.gif) 
+"*Note: The stream may appear purpleish, because there is no IR filter on OAK4-CS"
 
 ## Usage
 
@@ -43,12 +44,12 @@ Install libraries:
 
 **Ubuntu:**
 ```bash
-sudo apt-get update && apt-get install -y python3-pip libglib2.0-0 libgl1-mesa-glx wget git libzbar0 libzbar-dev
+sudo apt-get update && apt-get install -y libzbar0 libzbar-dev
 ```
 
 **macOS:**
 ```bash
-brew install wget git zbar
+brew install zbar
 ```
 
 You need to first prepare a **Python 3.10** environment with the following packages installed:
@@ -72,11 +73,6 @@ python3 main.py
 ```
 
 This will run the example with default arguments.
-
-Open visualizer on browser:
-```
-http://localhost:8082
-```
 
 ```bash
 python3 main.py --device 192.168.1.100 --fps_limit 15
