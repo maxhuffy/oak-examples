@@ -54,15 +54,22 @@ class VideoStitcher(Stitcher):
         return self.create_final_panorama()
 
 class Stitch(dai.node.ThreadedHostNode):
-    def __init__(self, nr_inputs: int) -> None:
+    def __init__(self, nr_inputs: int, output_resolution: list) -> None:
         super().__init__()
+        assert nr_inputs > 0  # number of inputs must be bigger then one 
+        assert len(output_resolution) == 2  # resolution must be a list with len 2
+        self.output_resolution = output_resolution 
+        # Setup required number of inputs and save them in list, it is assumed that 
+        # each input is linked to a camera stream in main node
         self.inputs = []
         for _ in range(0, nr_inputs):
             self.inputs.append(self.createInput())
+        # Create output stream, it is assumed that it is lined to output in main node
         self.out = self.createOutput()
-        self.stitcher = VideoStitcher()
+        self.stitcher = VideoStitcher()  # initialize video stitcher
 
     def recalculate_homography(self):
+        # Call this function to recalculate homography. Used when the position of camera(s) has changed.
         self.stitcher.unregister_cameras()
         return
 
@@ -72,11 +79,7 @@ class Stitch(dai.node.ThreadedHostNode):
             for input in self.inputs:
                 input_frame = input.get()  # get the frame from input
                 assert isinstance(input_frame, dai.ImgFrame)  # assert that it has correct type
-                images.append(input_frame.getCvFrame())
-
-            if len(images) < 2:
-                print(f"There should be at lest 2 frames for stitching.")
-                break
+                images.append(input_frame.getCvFrame())  # save images as cv frames
     
             try:
                 stitched = self.stitcher.stitch(images)
@@ -85,6 +88,6 @@ class Stitch(dai.node.ThreadedHostNode):
                 stitched = cv2.hconcat(images)
 
             img_frame = dai.ImgFrame()
-            stitched = cv2.resize(stitched, (512,288))
+            stitched = cv2.resize(stitched, self.output_resolution)
             img_frame.setCvFrame(stitched, dai.ImgFrame.Type.BGR888p)
             self.out.send(img_frame)

@@ -40,18 +40,27 @@ with contextlib.ExitStack() as stack:
 
         outputs.append(output)
 
-    stitched = pipeline.create(Stitch, len(outputs))
+    # Create threaded node pipeline with Stitch class, setting nr on inputs and outptut resolution 
+    # set to NN input resolution
+    stitch_pl = pipeline.create(Stitch, nr_inputs=len(outputs), output_resolution = (512,288))
     for i, output in enumerate(outputs):
-        output.link(stitched.inputs[i])
+        # Link each output of a camera to stitching inputs
+        output.link(stitch_pl.inputs[i])
+        # Do not block stream if image queue gets full - less delay in output detection stream
+        stitch_pl.inputs[i].setBlocking(False)  
 
-    nn_with_parser = pipeline.create(ParsingNeuralNetwork).build(stitched.out, "luxonis/yolov6-nano:r2-coco-512x288")
+    # Run NN detection on stitched output 
+    nn_with_parser = pipeline.create(ParsingNeuralNetwork).build(stitch_pl.out, "luxonis/yolov6-nano:r2-coco-512x288")
 
-    visualizer.addTopic("Stitched", stitched.out)
+    # Show stitched image on visualizer overlayed with nn detections
+    visualizer.addTopic("Stitched", stitch_pl.out)
     visualizer.addTopic("NN detections", nn_with_parser.out)
-    visualizer.addTopic("Raw video", outputs[0])
 
+    # Start all of the pipelines
     for p in pipelines:
         p.start()
+
+    # Register visualizer with the first pipeline
     visualizer.registerPipeline(pipelines[0])
     
     print("Press 'r' in visualizer to recalculate homography")
@@ -61,6 +70,6 @@ with contextlib.ExitStack() as stack:
             print("Got q key from the remote connection!")
             break
         if key == ord("r"):
-            print("Got r key from the remote connection, redoing homography")
-            stitched.recalculate_homography()
+            print("Got r key from the remote connection, recalculating homography")
+            stitch_pl.recalculate_homography()
 
