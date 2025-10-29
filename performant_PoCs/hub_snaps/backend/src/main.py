@@ -148,22 +148,25 @@ with dai.Pipeline(device) as pipeline:
 
     cond_gate = ConditionsGate(default_cooldown_s=0.0, enabled=True)
     cond_gate.set_key_enabled("no_detections", False)
-    cond_gate.set_cooldown("no_detections", 15.0)
+    cond_gate.set_cooldown("no_detections", 300.0)
 
     cond_gate.set_key_enabled("timed", False)
-    cond_gate.set_cooldown("timed", 15.0)
+    cond_gate.set_cooldown("timed", 300.0)
 
     cond_gate.set_key_enabled("low_conf", False)
-    cond_gate.set_cooldown("low_conf", 15.0)
+    cond_gate.set_cooldown("low_conf", 300.0)
 
     cond_gate.set_key_enabled("lost_mid", False)
-    cond_gate.set_cooldown("lost_mid", 15.0)
+    cond_gate.set_cooldown("lost_mid", 300.0)
 
     _runtime = {
         "newdet_running": False,
         "conf_threshold": CONFIDENCE_THRESHOLD,
         "lost_mid_margin": 0.20,
+        "snapping_running": False,
     }
+
+    current_classes = CLASS_NAMES.copy()
     object_tracker = pipeline.create(dai.node.ObjectTracker)
 
     object_tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
@@ -267,6 +270,9 @@ with dai.Pipeline(device) as pipeline:
 
         update_labels(new_classes, offset=0)
 
+        current_classes.clear()
+        current_classes.extend(new_classes)
+
         print(f"Classes updated (YOLOE text): {new_classes}")
 
     def conf_threshold_update_service(new_conf_threshold: float):
@@ -350,6 +356,8 @@ with dai.Pipeline(device) as pipeline:
 
         if not isinstance(payload, dict):
             return {"ok": False, "reason": "payload_must_be_dict"}
+
+        prev_running = bool(_runtime.get("snapping_running", False))
 
         # timed
         tcfg = payload.get("timed")
@@ -436,11 +444,55 @@ with dai.Pipeline(device) as pipeline:
             or cond_gate.is_key_enabled("low_conf")
             or cond_gate.is_key_enabled("lost_mid")
         )
+
+        if any_active and not prev_running:
+            cond_gate.reset(["timed", "no_detections", "low_conf", "lost_mid"])
+
         snaps_producer.setRunning(any_active)
+        _runtime["snapping_running"] = any_active
         if any_active:
             snaps_producer.setTimeInterval(base_dt_seconds)
 
         return {"ok": True}
+
+    def get_config_service(_payload=None):
+        """
+        Returns the current backend configuration state so FE can restore UI.
+        Cooldowns returned in minutes for FE display.
+        """
+
+        def s_to_min(seconds: float) -> float:
+            try:
+                return float(seconds) / 60.0 if float(seconds) > 0 else 0.0
+            except Exception:
+                return 0.0
+
+        config = {
+            "classes": current_classes.copy(),
+            "confidence_threshold": _runtime["conf_threshold"],
+            "snapping": {
+                "running": _runtime.get("snapping_running", False),
+                "timed": {
+                    "enabled": cond_gate.is_key_enabled("timed"),
+                    "interval": s_to_min(cond_gate.get_cooldown("timed")),
+                },
+                "noDetections": {
+                    "enabled": cond_gate.is_key_enabled("no_detections"),
+                    "cooldown": s_to_min(cond_gate.get_cooldown("no_detections")),
+                },
+                "lowConfidence": {
+                    "enabled": cond_gate.is_key_enabled("low_conf"),
+                    "threshold": _runtime.get("low_conf_thresh", 0.30),
+                    "cooldown": s_to_min(cond_gate.get_cooldown("low_conf")),
+                },
+                "lostMid": {
+                    "enabled": cond_gate.is_key_enabled("lost_mid"),
+                    "cooldown": s_to_min(cond_gate.get_cooldown("lost_mid")),
+                    "margin": _runtime.get("lost_mid_margin", 0.20),
+                },
+            },
+        }
+        return config
 
     visualizer.registerService("Class Update Service", class_update_service)
     visualizer.registerService(
@@ -449,6 +501,7 @@ with dai.Pipeline(device) as pipeline:
     visualizer.registerService("Image Upload Service", image_upload_service)
     visualizer.registerService("BBox Prompt Service", bbox_prompt_service)
     visualizer.registerService("Snap Collection Service", snap_collection_service)
+    visualizer.registerService("Get Config Service", get_config_service)
 
     print("Pipeline created.")
 

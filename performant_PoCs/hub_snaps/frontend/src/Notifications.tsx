@@ -64,7 +64,7 @@ function Toast({ notification, onClose, index }: { notification: Notification; o
 
     return (
         <div className={css({
-            backgroundColor: colors.bg,
+            backgroundColor: "white",
             border: "1px solid",
             borderColor: colors.border,
             color: colors.text,

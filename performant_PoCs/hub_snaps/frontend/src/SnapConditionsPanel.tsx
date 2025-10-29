@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { css } from "../styled-system/css/css.mjs";
 import { useConnection } from "@luxonis/depthai-viewer-common";
 import { useNotifications } from "./Notifications.tsx";
@@ -8,7 +8,19 @@ import { EdgeBufferPercentInput } from "./inputs/EdgeBufferPercentInput";
 import { SnapCollectionButton } from "./SnapCollectionButton";
 import { SliderControl } from "./inputs/SliderControl";
 
-export function SnapConditionsPanel() {
+interface SnappingConfig {
+  running: boolean;
+  timed: { enabled: boolean; interval: number };
+  noDetections: { enabled: boolean; cooldown: number };
+  lowConfidence: { enabled: boolean; threshold: number; cooldown: number };
+  lostMid: { enabled: boolean; cooldown: number; margin: number };
+}
+
+interface SnapConditionsPanelProps {
+  initialConfig?: SnappingConfig;
+}
+
+export function SnapConditionsPanel({ initialConfig }: SnapConditionsPanelProps) {
   const connection = useConnection();
   const { notify } = useNotifications();
 
@@ -55,6 +67,56 @@ export function SnapConditionsPanel() {
 
   const anyInvalid = !timingValid || !noDetValid || !lowConfValid || !lostMidValid || !lostMidPctValid;
   const disabledControls = busy || running;
+
+  // Restore state from initialConfig when available
+  useEffect(() => {
+    if (!initialConfig) {
+      console.log("[SnapConditionsPanel] No initialConfig provided");
+      return;
+    }
+
+    console.log("[SnapConditionsPanel] Restoring config from backend:", initialConfig);
+    setRunning(initialConfig.running);
+
+    // Timing
+    if (initialConfig.timed) {
+      setTimingEnabled(initialConfig.timed.enabled);
+      if (initialConfig.timed.interval > 0) {
+        setTimingStr(initialConfig.timed.interval.toFixed(1));
+      }
+    }
+
+    // No detections
+    if (initialConfig.noDetections) {
+      setNoDetEnabled(initialConfig.noDetections.enabled);
+      if (initialConfig.noDetections.cooldown > 0) {
+        setNoDetStr(initialConfig.noDetections.cooldown.toFixed(1));
+      }
+    }
+
+    // Low confidence
+    if (initialConfig.lowConfidence) {
+      setLowConfEnabled(initialConfig.lowConfidence.enabled);
+      if (initialConfig.lowConfidence.threshold !== undefined) {
+        setLowConfThreshold(initialConfig.lowConfidence.threshold);
+      }
+      if (initialConfig.lowConfidence.cooldown > 0) {
+        setLowConfStr(initialConfig.lowConfidence.cooldown.toFixed(1));
+      }
+    }
+
+    // Lost in middle
+    if (initialConfig.lostMid) {
+      setLostMidEnabled(initialConfig.lostMid.enabled);
+      if (initialConfig.lostMid.cooldown > 0) {
+        setLostMidStr(initialConfig.lostMid.cooldown.toFixed(1));
+      }
+      if (initialConfig.lostMid.margin !== undefined) {
+        const marginPercent = Math.round(initialConfig.lostMid.margin * 100);
+        setLostMidPctStr(marginPercent.toString());
+      }
+    }
+  }, [initialConfig]);
 
   const warnIfTooManyDecimals = (label: string, value: string) => {
     if (value.trim() !== "" && hasTooManyDecimals(value)) {

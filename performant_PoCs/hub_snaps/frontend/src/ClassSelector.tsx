@@ -1,14 +1,26 @@
 import { Flex, Button, Input } from "@luxonis/common-fe-components";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { css } from "../styled-system/css/css.mjs";
 import { useConnection } from "@luxonis/depthai-viewer-common";
 import { useNotifications } from "./Notifications.tsx";
 
-export function ClassSelector() {
+interface ClassSelectorProps {
+    initialClasses?: string[];
+}
+
+export function ClassSelector({ initialClasses }: ClassSelectorProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const connection = useConnection();
     const [selectedClasses, setSelectedClasses] = useState<string[]>(["person", "chair", "TV"]);
     const { notify } = useNotifications();
+
+    // Update classes from backend config
+    useEffect(() => {
+        if (initialClasses && Array.isArray(initialClasses) && initialClasses.length > 0) {
+            console.log("[ClassSelector] Restoring classes from backend:", initialClasses);
+            setSelectedClasses([...initialClasses]); // Create new array to ensure update
+        }
+    }, [initialClasses]);
 
     const handleSendMessage = () => {
         if (inputRef.current) {

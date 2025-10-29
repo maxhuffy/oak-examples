@@ -1,15 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useConnection } from "@luxonis/depthai-viewer-common";
 import { SliderControl } from "./inputs/SliderControl";
 
 interface ConfidenceSliderProps {
-  initialValue?: number;        // defaults to 0.5
+  initialValue?: number;
   disabled?: boolean;
 }
 
 export function ConfidenceSlider({ initialValue = 0.5, disabled }: ConfidenceSliderProps) {
   const connection = useConnection();
   const [value, setValue] = useState(initialValue);
+
+  // Update value from backend config
+  useEffect(() => {
+    if (initialValue !== undefined && Number.isFinite(initialValue)) {
+      console.log("[ConfidenceSlider] Restoring value from backend:", initialValue);
+      setValue(initialValue);
+    }
+  }, [initialValue]);
 
   const handleCommit = (v: number) => {
     if (Number.isFinite(v)) {

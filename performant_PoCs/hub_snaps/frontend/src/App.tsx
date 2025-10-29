@@ -7,6 +7,18 @@ import { SnapConditionsPanel } from "./SnapConditionsPanel.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotifications } from "./Notifications.tsx";
 
+interface BackendConfig {
+  classes: string[];
+  confidence_threshold: number;
+  snapping: {
+    running: boolean;
+    timed: { enabled: boolean; interval: number };
+    noDetections: { enabled: boolean; cooldown: number };
+    lowConfidence: { enabled: boolean; threshold: number; cooldown: number };
+    lostMid: { enabled: boolean; cooldown: number; margin: number };
+  };
+}
+
 function App() {
   const connection = useConnection();
   const streamContainerRef = useRef<HTMLDivElement>(null);
@@ -14,6 +26,8 @@ function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [currentRect, setCurrentRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [backendConfig, setBackendConfig] = useState<BackendConfig | null>(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const { notify } = useNotifications();
 
   const getUnderlyingMediaAndSize = () => {
@@ -184,6 +198,62 @@ function App() {
     });
   }, [connection.connected, notify]);
 
+  // Fetch backend config on connection
+  useEffect(() => {
+    if (!connection.connected || configLoaded) return;
+
+    const timeoutId = setTimeout(() => {
+      console.log("[App] Fetching backend configuration...");
+      (connection as any).daiConnection?.postToService(
+        "Get Config Service",
+        null,
+        (response: any) => {
+          if (response === null || response === undefined) {
+            console.log("[App] Config service not available - using defaults");
+            return;
+          }
+
+          let config: BackendConfig | null = null;
+          try {
+            let obj: any = response;
+            const td = new TextDecoder('utf-8');
+            const view = new Uint8Array(obj.buffer, obj.byteOffset, obj.byteLength);
+            const jsonStr = td.decode(view);
+            obj = JSON.parse(jsonStr);
+
+            if (obj && obj.data && typeof obj.data === 'object') {
+              obj = obj.data;
+            }
+            if (obj && typeof obj === 'object' && 'classes' in obj) {
+              config = obj as BackendConfig;
+            }
+          } catch (e) {
+            console.error('[App] Failed to parse service response:', e);
+          }
+          
+          if (config && Array.isArray(config.classes) && typeof config.confidence_threshold === 'number') {
+            setBackendConfig(config);
+            setConfigLoaded(true);
+            console.log("[App] Config restored from backend");
+            notify("Configuration restored from backend", { type: "success", durationMs: 2000 });
+          } else {
+            console.log("[App] Invalid config format - using defaults");
+          }
+        }
+      );
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, [connection.connected, configLoaded, notify]);
+
+  // Reset config loaded flag when disconnected
+  useEffect(() => {
+    if (!connection.connected) {
+      setConfigLoaded(false);
+      setBackendConfig(null);
+    }
+  }, [connection.connected]);
+
   const onOverlayMouseDown = (e: any) => {
     if (!isDrawing) return;
     const canvas = overlayCanvasRef.current;
@@ -275,7 +345,7 @@ function App() {
 
         <SectionTitle>Labels by Text</SectionTitle>
         <p className={css({ fontSize: "xs", color: "gray.600", mb: "xs" })}>Enter labels to find (e.g., person, chair, TV).</p>
-        <ClassSelector />
+        <ClassSelector initialClasses={backendConfig?.classes} />
 
         <SectionTitle>Labels by Image</SectionTitle>
         <p className={css({ fontSize: "xs", color: "gray.600", mb: "xs" })}>Upload a photo or draw a box on the stream.</p>
@@ -283,7 +353,7 @@ function App() {
 
         <SectionTitle>Confidence Filter</SectionTitle>
         <p className={css({ fontSize: "xs", color: "gray.600", mb: "xs" })}>Detections below this confidence are dropped.</p>
-        <ConfidenceSlider initialValue={0.40} />
+        <ConfidenceSlider initialValue={backendConfig?.confidence_threshold ?? 0.40} />
 
         <div
           className={css({
@@ -297,7 +367,7 @@ function App() {
         >
           <h2 className={css({ fontSize: "lg", fontWeight: "semibold", mb: "1" })}>Snap conditions</h2>
           <p className={css({ fontSize: "xs", color: "gray.600", mb: "sm", lineHeight: "snug" })}>Choose when to auto-capture a snap.</p>
-          <SnapConditionsPanel />
+          <SnapConditionsPanel initialConfig={backendConfig?.snapping} />
         </div>
 
         <div
