@@ -56,7 +56,7 @@ class VideoStitcher(Stitcher):
 class Stitch(dai.node.ThreadedHostNode):
     def __init__(self, nr_inputs: int, output_resolution: list) -> None:
         super().__init__()
-        assert nr_inputs > 0  # number of inputs must be bigger then one 
+        assert nr_inputs > 1  # number of inputs must be bigger then one 
         assert len(output_resolution) == 2  # resolution must be a list with len 2
         self.output_resolution = output_resolution 
         # Setup required number of inputs and save them in list, it is assumed that 
