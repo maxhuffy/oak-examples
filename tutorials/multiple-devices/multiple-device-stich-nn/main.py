@@ -4,7 +4,7 @@ from depthai_nodes.node import ParsingNeuralNetwork
 from stitch import Stitch
 import contextlib
 import depthai as dai
-
+from depthai_nodes.node import ParsingNeuralNetwork, TilesPatcher, Tiling
 
 def createPipeline(pipeline):
     camRgb = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
@@ -49,12 +49,32 @@ with contextlib.ExitStack() as stack:
         # Do not block stream if image queue gets full - less delay in output detection stream
         stitch_pl.inputs[i].setBlocking(False)  
 
+    # stitched_img_frame: dai.ImgFrame = stitch_pl.out.
+    grid_size = (1, 2)
+
+    # model_description = dai.NNModelDescription.
+
+    tile_manager = pipeline.create(Tiling).build(
+        img_output=stitch_pl.out,
+        img_shape=[stitched_img_frame.getWidth(), stitched_img_frame.getHeight()],
+        overlap=0.2,
+        grid_size=grid_size,
+        grid_matrix=None,
+        global_detection=False,
+        nn_shape=[512, 288],
+    )
+
     # Run NN detection on stitched output 
-    nn_with_parser = pipeline.create(ParsingNeuralNetwork).build(stitch_pl.out, "luxonis/yolov6-nano:r2-coco-512x288")
+    nn = pipeline.create(ParsingNeuralNetwork).build(tile_manager.out, "luxonis/yolov6-nano:r2-coco-512x288")
+
+    patcher = pipeline.create(TilesPatcher).build(
+        tile_manager=tile_manager, nn=nn.out, conf_thresh=0.3, iou_thresh=0.2
+    )
+
 
     # Show stitched image on visualizer overlayed with nn detections
     visualizer.addTopic("Stitched", stitch_pl.out)
-    visualizer.addTopic("NN detections", nn_with_parser.out)
+    visualizer.addTopic("NN detections", nn.out)
 
     # Start all of the pipelines
     for p in pipelines:
