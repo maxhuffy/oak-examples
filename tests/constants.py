@@ -28,6 +28,10 @@ KNOWN_FAILING = {
         "reason": "Not supported for peripheral",
         "mode": ["peripheral"],
     },
+    "apps/data-collection": {
+        "reason": "Not supported for peripheral",
+        "mode": ["peripheral"],
+    },
     "integrations/roboflow-integration": {
         "reason": "Can't run without arguments (e.g. roboflow api-key)",
         "mode": "all",
