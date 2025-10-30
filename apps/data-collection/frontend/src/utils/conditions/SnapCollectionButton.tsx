@@ -1,5 +1,5 @@
 import { Button } from "@luxonis/common-fe-components";
-import { css } from "../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 
 interface SnapActionButtonProps {
   running: boolean;

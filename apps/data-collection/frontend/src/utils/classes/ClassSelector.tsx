@@ -1,8 +1,8 @@
 import { Flex, Button, Input } from "@luxonis/common-fe-components";
 import { useRef, useState, useEffect } from "react";
-import { css } from "../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 import { useConnection } from "@luxonis/depthai-viewer-common";
-import { useNotifications } from "./Notifications.tsx";
+import { useNotifications } from "../../Notifications.tsx";
 
 interface ClassSelectorProps {
     initialClasses?: string[];

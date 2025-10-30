@@ -1,12 +1,12 @@
 import { useMemo, useState, useEffect } from "react";
-import { css } from "../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 import { useConnection } from "@luxonis/depthai-viewer-common";
-import { useNotifications } from "./Notifications.tsx";
-import { ConditionCard } from "./ConditionCard";
-import { CooldownMinutesInput } from "./inputs/CooldownMinutesInput";
-import { EdgeBufferPercentInput } from "./inputs/EdgeBufferPercentInput";
-import { SnapCollectionButton } from "./SnapCollectionButton";
-import { SliderControl } from "./inputs/SliderControl";
+import { useNotifications } from "../../Notifications.tsx";
+import { ConditionCard } from "./ConditionCard.tsx";
+import { CooldownMinutesInput } from "./CooldownMinutesInput.tsx";
+import { EdgeBufferPercentInput } from "./EdgeBufferPercentInput.tsx";
+import { SnapCollectionButton } from "./SnapCollectionButton.tsx";
+import { SliderControl } from "../SliderControl.tsx";
 
 interface SnappingConfig {
   running: boolean;

@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { css } from "../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 
 interface ConditionCardProps {
   title: string;

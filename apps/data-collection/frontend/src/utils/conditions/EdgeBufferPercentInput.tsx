@@ -1,4 +1,4 @@
-import { css } from "../../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 
 interface EdgeBufferPercentInputProps {
   value: string;

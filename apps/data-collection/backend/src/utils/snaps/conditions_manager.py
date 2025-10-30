@@ -1,27 +1,39 @@
 import time
 from typing import Dict, Iterable, Optional
+from .conditions.base_condition import ConditionBase
 
 
-class ConditionsGate:
+class ConditionsManager:
     """
-    Generic per-condition cooldown gate.
-    - First hit for a key fires immediately.
-    - Subsequent hits for the same key are allowed only after its cooldown.
-    - Supports global enable + per-key enable + per-key cooldown overrides.
+    Manages registration and evaluation of snap trigger conditions.
+
+    Tracks cooldowns, enabled states, and timing for each condition,
+    ensuring that individual triggers fire only when their criteria
+    and cooldown constraints are met.
     """
 
-    def __init__(self, default_cooldown_s: float = 0.0, enabled: bool = True):
+    def __init__(self, default_cooldown_s: float = 300, enabled: bool = True):
         self.enabled = bool(enabled)
         self.default_cooldown_s = max(0.0, float(default_cooldown_s))
         self.cooldowns: Dict[str, float] = {}
         self.key_enabled: Dict[str, bool] = {}
         self.last_sent: Dict[str, float] = {}
+        self.conditions: Dict[str, "ConditionBase"] = {}
+
+    def register_condition(
+        self, condition: ConditionBase, enabled=False, cooldown_s=-1.0
+    ):
+        key = condition.key
+        self.conditions[key] = condition
+        self.key_enabled[key] = enabled
+        self.cooldowns[key] = cooldown_s if cooldown_s >= 0 else self.default_cooldown_s
+
+    def register_conditions(self, conditions: Iterable[ConditionBase]):
+        for cond in conditions:
+            self.register_condition(cond)
 
     def set_enabled(self, on: bool) -> None:
-        self.enabled = bool(on)
-
-    def set_default(self, seconds: float) -> None:
-        self.default_cooldown_s = max(0.0, float(seconds))
+        self.enabled = on
 
     def set_key_enabled(self, key: str, on: bool) -> None:
         self.key_enabled[str(key)] = bool(on)
@@ -29,7 +41,7 @@ class ConditionsGate:
     def set_cooldown(self, key: str, seconds: float) -> None:
         self.cooldowns[str(key)] = max(0.0, float(seconds))
 
-    def reset(self, keys: Optional[Iterable[str]] = None) -> None:
+    def reset_cooldowns(self, keys: Optional[Iterable[str]] = None) -> None:
         if keys is None:
             self.last_sent.clear()
         else:
@@ -56,3 +68,12 @@ class ConditionsGate:
             self.last_sent[key] = now
             return True
         return False
+
+    def evaluate(self, **kwargs):
+        """
+        Iterate through all registered conditions,
+        yield (condition, extras) for those that fire.
+        """
+        for key, cond in self.conditions.items():
+            if self.is_key_enabled(key) and cond.should_trigger(self, **kwargs):
+                yield cond, cond.handle(**kwargs)

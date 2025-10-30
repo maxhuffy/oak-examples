@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useConnection } from "@luxonis/depthai-viewer-common";
-import { SliderControl } from "./inputs/SliderControl";
+import { SliderControl } from "../SliderControl.tsx";
 
 interface ConfidenceSliderProps {
   initialValue?: number;

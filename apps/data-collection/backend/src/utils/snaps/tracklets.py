@@ -1,7 +1,14 @@
 from __future__ import annotations
 from typing import List, Optional, Tuple
 import depthai as dai
-from depthai_nodes.node import SnapsProducer
+
+
+class _LostMidState:
+    def __init__(self) -> None:
+        self.prev_tracked: dict[int, bool] = {}
+
+
+_LOSTMID_STATE = _LostMidState()
 
 
 def _status_is_tracked(tracklet) -> bool:
@@ -30,25 +37,6 @@ def _label_idx_name(tracklet, class_names: List[str]) -> Tuple[int, str]:
         idx = -1
     name = class_names[idx] if 0 <= idx < len(class_names) else ""
     return idx, name
-
-
-def _send_snap(
-    name: str,
-    producer: SnapsProducer,
-    frame: dai.ImgFrame,
-    tags: List[str],
-    extras: dict,
-    detections: dai.ImgDetections = None,
-) -> bool:
-    return producer.sendSnap(name, frame, detections, tags, extras)
-
-
-class _LostMidState:
-    def __init__(self) -> None:
-        self.prev_tracked: dict[int, bool] = {}
-
-
-_LOSTMID_STATE = _LostMidState()
 
 
 def _status_is_lost(t) -> bool:
@@ -80,3 +68,13 @@ def _roi_center_area_norm(t) -> Optional[Tuple[float, float, float]]:
         h = float(getattr(d, "height", 0.0))
         return x + 0.5 * w, y + 0.5 * h, max(0.0, w * h)
     return None
+
+
+def setup_tracker(object_tracker: dai.node.ObjectTracker):
+    object_tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
+    object_tracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.UNIQUE_ID)
+    object_tracker.setTrackingPerClass(True)
+    object_tracker.setTrackletBirthThreshold(3)
+    object_tracker.setTrackletMaxLifespan(90)
+    object_tracker.setOcclusionRatioThreshold(0.5)
+    object_tracker.setTrackerThreshold(0.25)

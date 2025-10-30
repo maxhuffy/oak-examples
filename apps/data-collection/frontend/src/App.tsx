@@ -1,9 +1,9 @@
 import { css } from "../styled-system/css/css.mjs";
 import { Streams, useConnection } from "@luxonis/depthai-viewer-common";
-import { ClassSelector } from "./ClassSelector.tsx";
-import { ConfidenceSlider } from "./ConfidenceSlider.tsx";
-import { ImageUploader } from "./ImageUploader.tsx";
-import { SnapConditionsPanel } from "./SnapConditionsPanel.tsx";
+import { ClassSelector } from "./utils/classes/ClassSelector.tsx";
+import { ConfidenceSlider } from "./utils/classes/ConfidenceSlider.tsx";
+import { ImageUploader } from "./utils/classes/ImageUploader.tsx";
+import { SnapConditionsPanel } from "./utils/conditions/SnapConditionsPanel.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNotifications } from "./Notifications.tsx";
 

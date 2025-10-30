@@ -1,8 +1,8 @@
 import { Button, Flex } from "@luxonis/common-fe-components";
-import { css } from "../styled-system/css/css.mjs";
+import { css } from "../../../styled-system/css/css.mjs";
 import { useState } from "react";
 import { useConnection } from "@luxonis/depthai-viewer-common";
-import { useNotifications } from "./Notifications.tsx";
+import { useNotifications } from "../../Notifications.tsx";
 
 type Props = {
     onDrawBBox?: () => void;
