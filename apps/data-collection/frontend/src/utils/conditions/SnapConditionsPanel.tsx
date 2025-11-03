@@ -10,7 +10,7 @@ import { SliderControl } from "../SliderControl.tsx";
 
 interface SnappingConfig {
   running: boolean;
-  timed: { enabled: boolean; interval: number };
+  timed: { enabled: boolean; cooldown: number };
   noDetections: { enabled: boolean; cooldown: number };
   lowConfidence: { enabled: boolean; threshold: number; cooldown: number };
   lostMid: { enabled: boolean; cooldown: number; margin: number };
@@ -81,8 +81,8 @@ export function SnapConditionsPanel({ initialConfig }: SnapConditionsPanelProps)
     // Timing
     if (initialConfig.timed) {
       setTimingEnabled(initialConfig.timed.enabled);
-      if (initialConfig.timed.interval > 0) {
-        setTimingStr(initialConfig.timed.interval.toFixed(1));
+      if (initialConfig.timed.cooldown > 0) {
+        setTimingStr(initialConfig.timed.cooldown.toFixed(1));
       }
     }
 
@@ -135,7 +135,7 @@ export function SnapConditionsPanel({ initialConfig }: SnapConditionsPanelProps)
 
     const payload = runFlag
       ? {
-          timed: { enabled: timingEnabled, interval: timingEnabled ? timingMin * 60 : 0 },
+          timed: { enabled: timingEnabled, cooldown: timingEnabled ? timingMin * 60 : 0 },
           noDetections: { enabled: noDetEnabled, cooldown: noDetEnabled ? noDetMin * 60 : undefined },
           lowConfidence: lowConfEnabled
             ? { enabled: true, threshold: lowConfThreshold, cooldown: lowConfMin * 60 }
@@ -145,7 +145,7 @@ export function SnapConditionsPanel({ initialConfig }: SnapConditionsPanelProps)
             : { enabled: false },
         }
       : {
-          timed: { enabled: false, interval: 0 },
+          timed: { enabled: false},
           noDetections: { enabled: false },
           lowConfidence: { enabled: false },
           lostMid: { enabled: false },

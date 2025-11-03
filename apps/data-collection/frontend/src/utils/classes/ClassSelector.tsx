@@ -45,7 +45,7 @@ export function ClassSelector({ initialClasses }: ClassSelectorProps) {
             connection.daiConnection?.postToService(
                 // @ts-ignore - Custom service
                 "Class Update Service",
-                updatedClasses,
+                { classes : updatedClasses },
                 () => {
                     console.log('Backend acknowledged class update');
                     setSelectedClasses(updatedClasses);

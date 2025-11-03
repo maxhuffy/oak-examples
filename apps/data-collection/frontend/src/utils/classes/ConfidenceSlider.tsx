@@ -19,12 +19,12 @@ export function ConfidenceSlider({ initialValue = 0.5, disabled }: ConfidenceSli
     }
   }, [initialValue]);
 
-  const handleCommit = (v: number) => {
-    if (Number.isFinite(v)) {
+  const handleCommit = (new_threshold: number) => {
+    if (Number.isFinite(new_threshold)) {
       connection.daiConnection?.postToService(
         // @ts-ignore - Custom service
         "Threshold Update Service",
-        v,
+          { threshold: new_threshold },
         (resp: any) => console.log("[ConfidenceSlider] BE ack:", resp)
       );
     }

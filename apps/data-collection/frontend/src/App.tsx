@@ -12,7 +12,7 @@ interface BackendConfig {
   confidence_threshold: number;
   snapping: {
     running: boolean;
-    timed: { enabled: boolean; interval: number };
+    timed: { enabled: boolean; cooldown: number };
     noDetections: { enabled: boolean; cooldown: number };
     lowConfidence: { enabled: boolean; threshold: number; cooldown: number };
     lostMid: { enabled: boolean; cooldown: number; margin: number };
@@ -148,12 +148,7 @@ function App() {
     (connection as any).daiConnection?.postToService(
       "BBox Prompt Service",
       {
-        filename: "object.png",
-        type: "application/json",
-        data: null,
         bbox: { x: xNorm, y: yNorm, width: wNorm, height: hNorm },
-        bboxType: "normalized",
-        label: "object",
       },
       (resp: any) => {
         console.log("[BBox] Service ack:", resp);
@@ -205,7 +200,7 @@ function App() {
     const timeoutId = setTimeout(() => {
       console.log("[App] Fetching backend configuration...");
       (connection as any).daiConnection?.postToService(
-        "Get Config Service",
+        "Export Service",
         null,
         (response: any) => {
           if (response === null || response === undefined) {
