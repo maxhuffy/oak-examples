@@ -20,17 +20,6 @@ class TrackletAnalyzer:
             return None
 
     @property
-    def label_index(self) -> int:
-        try:
-            return int(getattr(self._t, "label", -1))
-        except Exception:
-            return -1
-
-    def label_name(self, class_names: list[str]) -> str:
-        idx = self.label_index
-        return class_names[idx] if 0 <= idx < len(class_names) else ""
-
-    @property
     def is_tracked(self) -> bool:
         val = getattr(self._t, "status", None)
         try:
