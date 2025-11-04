@@ -88,6 +88,6 @@ class Stitch(dai.node.ThreadedHostNode):
                 stitched = cv2.hconcat(images)
 
             img_frame = dai.ImgFrame()
-            # stitched = cv2.resize(stitched, self.output_resolution)
+            stitched = cv2.resize(stitched, (768,288))
             img_frame.setCvFrame(stitched, dai.ImgFrame.Type.BGR888p)
             self.out.send(img_frame)

@@ -40,7 +40,7 @@ with contextlib.ExitStack() as stack:
 
         outputs.append(output)
 
-    # Create threaded node pipeline with Stitch class, setting nr on inputs and outptut resolution 
+    # Create threaded node pipeline with Stitch class, setting nr on inputs and output resolution 
     # set to NN input resolution
     stitch_pl = pipeline.create(Stitch, nr_inputs=len(outputs), output_resolution = (512,288))
     for i, output in enumerate(outputs):
@@ -49,32 +49,37 @@ with contextlib.ExitStack() as stack:
         # Do not block stream if image queue gets full - less delay in output detection stream
         stitch_pl.inputs[i].setBlocking(False)  
 
-    # stitched_img_frame: dai.ImgFrame = stitch_pl.out.
-    grid_size = (1, 2)
-
-    # model_description = dai.NNModelDescription.
+    # stitch_queue = stitch_pl.out.createOutputQueue()
+    # stitched_img_frame: dai.ImgFrame = stitch_queue.tryGet()
+    grid_size = (2, 1)
 
     tile_manager = pipeline.create(Tiling).build(
         img_output=stitch_pl.out,
-        img_shape=[stitched_img_frame.getWidth(), stitched_img_frame.getHeight()],
+        img_shape=(768,288),
         overlap=0.2,
         grid_size=grid_size,
         grid_matrix=None,
         global_detection=False,
-        nn_shape=[512, 288],
+        nn_shape=(512, 288),
     )
 
+    interleaved_manip = pipeline.create(dai.node.ImageManip)
+    interleaved_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+    tile_manager.out.link(interleaved_manip.inputImage)
+    
     # Run NN detection on stitched output 
     nn = pipeline.create(ParsingNeuralNetwork).build(tile_manager.out, "luxonis/yolov6-nano:r2-coco-512x288")
 
-    patcher = pipeline.create(TilesPatcher).build(
-        tile_manager=tile_manager, nn=nn.out, conf_thresh=0.3, iou_thresh=0.2
-    )
+    nn.input.setMaxSize(len(tile_manager.tile_positions))
 
+    patcher = pipeline.create(TilesPatcher).build(
+        tile_manager=tile_manager, nn=nn.out, conf_thresh=0.1, iou_thresh=0.2
+    )
 
     # Show stitched image on visualizer overlayed with nn detections
     visualizer.addTopic("Stitched", stitch_pl.out)
-    visualizer.addTopic("NN detections", nn.out)
+    # visualizer.addTopic("NN detections", nn.out)
+    visualizer.addTopic("Patcher", patcher.out)
 
     # Start all of the pipelines
     for p in pipelines:
