@@ -3,6 +3,7 @@ import depthai as dai
 
 from depthai_nodes.node import ImgDetectionsBridge
 
+from config.config_data_classes import RuntimeConfig
 from config.system_configuration import SystemConfiguration
 from core.controllers.nn_controller import YOLONNController
 from core.model_state import ModelState
@@ -23,7 +24,7 @@ class NeuralNetworkManager:
         self,
         pipeline: dai.Pipeline,
         video_source: VideoSourceManager,
-        runtime,
+        runtime: RuntimeConfig,
         config: SystemConfiguration,
         model_state: ModelState,
     ):

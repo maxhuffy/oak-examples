@@ -4,6 +4,9 @@ from depthai_nodes.node import (
     ImgDetectionsFilter,
     ImgDetectionsBridge,
 )
+
+from config.config_data_classes import RuntimeConfig
+from config.system_configuration import SystemConfiguration
 from infrastructure.neural_network.annotation_node import AnnotationNode
 from core.controllers.nn_controller import YOLONNController
 from core.model_state import ModelState
@@ -15,8 +18,8 @@ class NNPipelineSetup:
         self,
         pipeline: dai.Pipeline,
         video_source: VideoSourceManager,
-        runtime,
-        config,
+        runtime: RuntimeConfig,
+        config: SystemConfiguration,
         model_state: ModelState,
     ):
         self._pipeline = pipeline
