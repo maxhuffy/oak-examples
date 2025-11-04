@@ -69,7 +69,6 @@ with contextlib.ExitStack() as stack:
     
     # Run NN detection on stitched output 
     nn = pipeline.create(ParsingNeuralNetwork).build(tile_manager.out, "luxonis/yolov6-nano:r2-coco-512x288")
-
     nn.input.setMaxSize(len(tile_manager.tile_positions))
 
     patcher = pipeline.create(TilesPatcher).build(
@@ -78,7 +77,6 @@ with contextlib.ExitStack() as stack:
 
     # Show stitched image on visualizer overlayed with nn detections
     visualizer.addTopic("Stitched", stitch_pl.out)
-    # visualizer.addTopic("NN detections", nn.out)
     visualizer.addTopic("Patcher", patcher.out)
 
     # Start all of the pipelines
@@ -87,7 +85,7 @@ with contextlib.ExitStack() as stack:
 
     # Register visualizer with the first pipeline
     visualizer.registerPipeline(pipelines[0])
-    
+
     print("Press 'r' in visualizer to recalculate homography")
     while pipeline.isRunning():
         key = visualizer.waitKey(1)
