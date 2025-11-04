@@ -1,7 +1,9 @@
 # app/modules/handlers/base_embedding_handler.py
 from __future__ import annotations
-from typing import Any, List
+from typing import List
 import numpy as np
+
+from core.encoders.base_encoder import BaseEncoder
 from core.label_manager import LabelManager
 
 
@@ -11,7 +13,7 @@ class BasePromptHandler:
     Provides shared utilities for feature extraction and label management.
     """
 
-    def __init__(self, encoder: Any, label_manager: LabelManager):
+    def __init__(self, encoder: BaseEncoder, label_manager: LabelManager):
         self.encoder = encoder
         self.label_manager = label_manager
 

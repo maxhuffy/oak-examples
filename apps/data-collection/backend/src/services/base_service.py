@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, Dict
+from typing import Generic, TypeVar
 from services.service_name import ServiceName
 
 
@@ -18,7 +18,7 @@ class BaseService(ABC, Generic[PayloadT]):
         self.__name = self.NAME
 
     @abstractmethod
-    def handle(self, payload: PayloadT) -> Dict:
+    def handle(self, payload: PayloadT) -> dict[str, any]:
         """Execute service logic and return a JSON-serializable response."""
         pass
 

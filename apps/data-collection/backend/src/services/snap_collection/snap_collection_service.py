@@ -21,7 +21,7 @@ class SnapCollectionService(BaseService[SnapPayload]):
         self.engine = engine
         self.snaps_producer = snaps_producer
 
-    def handle(self, payload: SnapPayload) -> dict:
+    def handle(self, payload: SnapPayload) -> dict[str, any]:
         self.engine.import_conditions_config(payload)
 
         any_active = self.engine.any_active()

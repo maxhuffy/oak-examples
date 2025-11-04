@@ -16,7 +16,7 @@ class ThresholdUpdateService(BaseService[ThresholdUpdatePayload]):
         super().__init__()
         self.repository = repository
 
-    def handle(self, payload: ThresholdUpdatePayload):
+    def handle(self, payload: ThresholdUpdatePayload) -> dict[str, any]:
         new_threshold = payload["threshold"]
 
         clamped = max(0.0, min(1.0, new_threshold))

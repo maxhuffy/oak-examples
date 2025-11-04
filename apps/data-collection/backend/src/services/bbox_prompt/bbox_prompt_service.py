@@ -20,7 +20,7 @@ class BBoxPromptService(BaseService[BBoxPromptPayload]):
         self.frame_cache = frame_cache
         self.repository = repository
 
-    def handle(self, payload: BBoxPromptPayload):
+    def handle(self, payload: BBoxPromptPayload) -> dict[str, any]:
         image = self.frame_cache.get_last_frame()
         if image is None:
             return {"ok": False, "reason": "no_frame_available"}
@@ -30,7 +30,7 @@ class BBoxPromptService(BaseService[BBoxPromptPayload]):
                 image, payload["bbox"]
             )
         except ValueError as e:
-            return {"ok": False, "reason": "invalid_bbox"}
+            return {"ok": False, "reason": f"{e}"}
 
         self.repository.send_embeddings_pair(embeddings, dummy, class_names)
 

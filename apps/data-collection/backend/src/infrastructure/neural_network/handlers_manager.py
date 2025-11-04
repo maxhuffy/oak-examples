@@ -1,6 +1,6 @@
 from core.label_manager import LabelManager
-from core.handlers.class_update_handler import TextPromptHandler
-from core.handlers.image_upload_handler import ImagePromptHandler
+from core.handlers.text_prompt_handler import TextPromptHandler
+from core.handlers.image_prompt_handler import ImagePromptHandler
 from core.handlers.bbox_prompt_handler import BBoxPromptHandler
 from infrastructure.neural_network.encoders_manager import EncodersManager
 

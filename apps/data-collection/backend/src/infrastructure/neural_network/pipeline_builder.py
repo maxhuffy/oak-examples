@@ -52,14 +52,14 @@ class NNPipelineSetup:
         )
         nn.setNumInferenceThreads(self._config.nn.inference_threads)
         nn.getParser(0).setConfidenceThreshold(0.1)
-        self._video_source.input_node.link(nn.inputs["images"])
+        self._video_source.get_input_node().link(nn.inputs["images"])
         self._nn = nn
         return nn
 
     def _build_filters(self, nn) -> ImgDetectionsBridge:
         self._det_filter = self._pipeline.create(ImgDetectionsFilter).build(nn.out)
         self._annotation_node = self._pipeline.create(AnnotationNode).build(
-            self._det_filter.out, self._video_source.video_src_out
+            self._det_filter.out, self._video_source.get_video_source_output()
         )
         return self._pipeline.create(ImgDetectionsBridge).build(self._det_filter.out)
 
@@ -84,8 +84,8 @@ class NNPipelineSetup:
             self._config.tracker.occlusion_ratio_threshold
         )
         tracker.setTrackerThreshold(self._config.tracker.tracker_threshold)
-        self._video_source.input_node.link(tracker.inputTrackerFrame)
-        self._video_source.input_node.link(tracker.inputDetectionFrame)
+        self._video_source.get_input_node().link(tracker.inputTrackerFrame)
+        self._video_source.get_input_node().link(tracker.inputDetectionFrame)
         self._filtered_bridge.out.link(tracker.inputDetections)
         return tracker
 

@@ -12,7 +12,7 @@ class ExportService(BaseService[None]):
         super().__init__()
         self.config_exporter = config_exporter
 
-    def handle(self, payload: None = None) -> dict:
+    def handle(self, payload: None = None) -> dict[str, any]:
         try:
             config = self.config_exporter.export_config()
             print("[ExportService] returning:", config)

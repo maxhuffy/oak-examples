@@ -16,16 +16,16 @@ class YOLONNController:
         parser: YOLOExtendedParser,
         model_state: ModelState,
     ):
-        self.image_prompt_queue = image_prompt_queue
-        self.text_prompt_queue = text_prompt_queue
-        self.precision = precision
-        self.parser: YOLOExtendedParser = parser
-        self.model_state = model_state
+        self._image_prompt_queue = image_prompt_queue
+        self._text_prompt_queue = text_prompt_queue
+        self._precision = precision
+        self._parser: YOLOExtendedParser = parser
+        self._model_state = model_state
 
     def _tensor_type(self):
         return (
             dai.TensorInfo.DataType.FP16
-            if self.precision == "fp16"
+            if self._precision == "fp16"
             else dai.TensorInfo.DataType.U8F
         )
 
@@ -36,11 +36,11 @@ class YOLONNController:
 
     def _send_text_inputs(self, embeddings: np.ndarray):
         """Send class text embeddings (semantic prompts) to the NN."""
-        self._send(self.text_prompt_queue, "texts", embeddings)
+        self._send(self._text_prompt_queue, "texts", embeddings)
 
     def _send_visual_inputs(self, embeddings: np.ndarray):
         """Send visual prompts (mask- or bbox-based) to the NN."""
-        self._send(self.image_prompt_queue, "image_prompts", embeddings)
+        self._send(self._image_prompt_queue, "image_prompts", embeddings)
 
     def send_embeddings_pair(
         self,
@@ -51,9 +51,9 @@ class YOLONNController:
         """Send both text and visual conditioning inputs if available."""
         self._send_visual_inputs(visual_embeddings)
         self._send_text_inputs(text_embeddings)
-        self.model_state.update_classes(class_names)
+        self._model_state.update_classes(class_names)
 
     def set_confidence_threshold(self, threshold: float):
         """Apply threshold update directly to the NN parser."""
-        self.parser.setConfidenceThreshold(threshold)
-        self.model_state.update_threshold(threshold)
+        self._parser.setConfidenceThreshold(threshold)
+        self._model_state.update_threshold(threshold)

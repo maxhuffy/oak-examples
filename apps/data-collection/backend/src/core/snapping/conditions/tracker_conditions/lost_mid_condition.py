@@ -17,7 +17,7 @@ class LostMidCondition(Condition):
         self.margin: float = 0.2
         self.prev_tracked: dict[int, bool] = {}
 
-    def apply_config(self, conf: Dict[str, Any]) -> None:
+    def apply_config(self, conf: Dict[str, Any]):
         super().apply_config(conf)
         if "margin" in conf:
             val = float(conf["margin"])

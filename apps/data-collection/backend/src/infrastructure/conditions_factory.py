@@ -6,13 +6,14 @@ from core.snapping.conditions.base_condition import Condition
 
 class ConditionsFactory:
     def __init__(self, conditions_yaml: YamlLoader):
-        self.conditions_yaml = conditions_yaml
+        self._conditions_yaml = conditions_yaml
+
         self._engine: ConditionsEngine = self._build_engine()
 
     def _build_engine(self) -> ConditionsEngine:
         engine = ConditionsEngine()
 
-        for entry in self.conditions_yaml.conditions:
+        for entry in self._conditions_yaml.conditions:
             if not entry.path:
                 continue
 
@@ -22,7 +23,7 @@ class ConditionsFactory:
                 cls = getattr(module, class_name)
                 cond: Condition = cls(
                     name=entry.name,
-                    default_cooldown=self.conditions_yaml.cooldown,
+                    default_cooldown=self._conditions_yaml.cooldown,
                     tags=entry.tags,
                 )
                 engine.register(cond)

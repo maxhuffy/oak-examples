@@ -84,7 +84,7 @@ class TrackletAnalyzer:
         tid = self.id
         return tid is not None and prev_state.get(tid, False)
 
-    def update_state(self, state: Dict[int, bool]) -> None:
+    def update_state(self, state: Dict[int, bool]):
         tid = self.id
         if tid is not None:
             state[tid] = self.is_tracked

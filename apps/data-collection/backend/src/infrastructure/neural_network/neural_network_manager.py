@@ -59,7 +59,7 @@ class NeuralNetworkManager:
         )
 
         service_manager = NNServiceManager(
-            self._controller, handlers, self._video_source
+            self._controller, handlers, self._video_source.get_frame_cache()
         )
 
         self._register_services(service_manager.services)

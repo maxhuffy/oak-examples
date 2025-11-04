@@ -15,12 +15,12 @@ class YamlLoader:
 
         self._data = self._wrap(data)
 
-    def _wrap(self, obj):
+    def _wrap(self, obj) -> any:
         if isinstance(obj, dict):
             return type("YamlNamespace", (), {k: self._wrap(v) for k, v in obj.items()})
         elif isinstance(obj, list):
             return [self._wrap(x) for x in obj]
         return obj
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> any:
         return getattr(self._data, name)

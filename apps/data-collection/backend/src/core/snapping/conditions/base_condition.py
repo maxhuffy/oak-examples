@@ -42,7 +42,7 @@ class Condition(ABC):
         """Return optional metadata attached to the snap."""
         pass
 
-    def apply_config(self, conf: Dict[str, Any]) -> None:
+    def apply_config(self, conf: Dict[str, Any]):
         if "enabled" in conf:
             self.enabled = bool(conf["enabled"])
             if not self.enabled:
@@ -59,7 +59,7 @@ class Condition(ABC):
     def get_key(self) -> ConditionKey:
         return self.__key
 
-    def reset_cooldown(self) -> None:
+    def reset_cooldown(self):
         """Reset internal cooldown tracking."""
         self._last_trigger_time = None
 
@@ -70,7 +70,7 @@ class Condition(ABC):
             return True
         return (now - self._last_trigger_time) >= self.cooldown
 
-    def mark_triggered(self) -> None:
+    def mark_triggered(self):
         """Record that this condition has just fired."""
         now = time()
         self._last_trigger_time = now

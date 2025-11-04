@@ -14,7 +14,7 @@ class LowConfidenceCondition(Condition):
         self.threshold: float = 0.3
         self.last_lowest: float = 0.0
 
-    def apply_config(self, conf: Dict[str, Any]) -> None:
+    def apply_config(self, conf: Dict[str, Any]):
         super().apply_config(conf)
         if "threshold" in conf:
             val = float(conf["threshold"])
