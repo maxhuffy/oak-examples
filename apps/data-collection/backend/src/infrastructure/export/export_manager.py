@@ -26,9 +26,8 @@ class ExportManager:
 
         self._exporter: SystemStateExporter = None
         self._service: ExportService = None
-        self._build()
 
-    def _build(self):
+    def build(self):
         self._exporter = SystemStateExporter(self._model_state, self._condition_engine)
         export_service = ExportService(self._exporter)
         self._built = True

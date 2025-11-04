@@ -25,7 +25,8 @@ def main():
 
         snaps_manager = SnapsManager(pipeline, video_source, nn_manager, config)
 
-        ExportManager(model_state, snaps_manager.get_engine(), config)
+        export_manager = ExportManager(model_state, snaps_manager.get_engine(), config)
+        export_manager.build()
 
         print("Pipeline created.")
         pipeline.start()
