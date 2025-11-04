@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Tuple, List
 import numpy as np
-from core.handlers.base_embedding_handler import BasePromptHandler
+from core.handlers.base_prompt_handler import BasePromptHandler
 
 
 class TextPromptHandler(BasePromptHandler):

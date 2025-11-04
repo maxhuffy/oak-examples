@@ -2,7 +2,7 @@ import base64
 import cv2
 import numpy as np
 from typing import Tuple, List, Dict
-from core.handlers.base_embedding_handler import BasePromptHandler
+from core.handlers.base_prompt_handler import BasePromptHandler
 
 
 def decode_base64_image(base64_data_uri: str) -> np.ndarray:

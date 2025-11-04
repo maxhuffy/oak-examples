@@ -7,7 +7,7 @@ from services.image_upload.image_upload_service import ImageUploadService
 from services.bbox_prompt.bbox_prompt_service import BBoxPromptService
 
 
-class NNServiceManager:
+class NNServiceFactory:
     def __init__(
         self,
         controller: YOLONNController,

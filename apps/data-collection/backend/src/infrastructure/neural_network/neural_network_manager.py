@@ -8,9 +8,9 @@ from config.system_configuration import SystemConfiguration
 from core.controllers.nn_controller import YOLONNController
 from core.model_state import ModelState
 from infrastructure.neural_network.annotation_node import AnnotationNode
-from infrastructure.neural_network.nn_service_manager import NNServiceManager
+from infrastructure.neural_network.nn_service_factory import NNServiceFactory
 from infrastructure.video_source_manager import VideoSourceManager
-from infrastructure.neural_network.pipeline_builder import NNPipelineSetup
+from infrastructure.neural_network.nn_pipeline_setup import NNPipelineSetup
 from infrastructure.neural_network.encoders_manager import EncodersManager
 from infrastructure.neural_network.handlers_manager import HandlersManager
 
@@ -59,7 +59,7 @@ class NeuralNetworkManager:
             self._config.constants.class_names, self._config.constants.class_offset
         )
 
-        service_manager = NNServiceManager(
+        service_manager = NNServiceFactory(
             self._controller, handlers, self._video_source.get_frame_cache()
         )
 

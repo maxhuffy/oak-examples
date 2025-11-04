@@ -2,7 +2,7 @@ from config.system_configuration import SystemConfiguration
 from core.model_state import ModelState
 from core.snapping.conditions_engine import ConditionsEngine
 from config.system_state_exporter import SystemStateExporter
-from services.export_service.get_config_service import ExportService
+from services.export_service.export_service import ExportService
 
 
 class ExportManager:

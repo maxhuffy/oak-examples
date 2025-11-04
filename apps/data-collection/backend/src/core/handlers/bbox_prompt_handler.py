@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Tuple, Dict, List
-from core.handlers.base_embedding_handler import BasePromptHandler
+from core.handlers.base_prompt_handler import BasePromptHandler
 
 
 class BBoxPromptHandler(BasePromptHandler):

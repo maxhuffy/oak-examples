@@ -3,7 +3,7 @@ from config.system_configuration import SystemConfiguration
 from core.snapping.conditions_engine import ConditionsEngine
 from infrastructure.neural_network.neural_network_manager import NeuralNetworkManager
 from services.snap_collection.snap_collection_service import SnapCollectionService
-from infrastructure.conditions_factory import ConditionsFactory
+from infrastructure.snaps.conditions_factory import ConditionsFactory
 from infrastructure.snaps.snaps_producer_factory import SnapsProducerFactory
 from infrastructure.video_source_manager import VideoSourceManager
 from depthai_nodes.node import SnapsProducer
