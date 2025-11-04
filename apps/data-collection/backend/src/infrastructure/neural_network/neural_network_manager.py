@@ -3,8 +3,7 @@ import depthai as dai
 
 from depthai_nodes.node import ImgDetectionsBridge
 
-from config.config_data_classes import RuntimeConfig
-from config.system_configuration import SystemConfiguration
+from config.config_data_classes import NeuralNetworkConfig
 from core.controllers.nn_controller import YOLONNController
 from core.model_state import ModelState
 from infrastructure.neural_network.annotation_node import AnnotationNode
@@ -13,6 +12,7 @@ from infrastructure.video_source_manager import VideoSourceManager
 from infrastructure.neural_network.nn_pipeline_setup import NNPipelineSetup
 from infrastructure.neural_network.encoders_manager import EncodersManager
 from infrastructure.neural_network.handlers_manager import HandlersManager
+from services.base_service import BaseService
 
 
 class NeuralNetworkManager:
@@ -24,31 +24,30 @@ class NeuralNetworkManager:
         self,
         pipeline: dai.Pipeline,
         video_source: VideoSourceManager,
-        runtime: RuntimeConfig,
-        config: SystemConfiguration,
+        config: NeuralNetworkConfig,
         model_state: ModelState,
     ):
         self._pipeline = pipeline
         self._video_source = video_source
-        self._runtime = runtime
         self._config = config
         self._model_state = model_state
         self._tracker: dai.node.ObjectTracker = None
         self._filtered_detections: ImgDetectionsBridge = None
         self._controller: YOLONNController = None
+        self._annotations: AnnotationNode = None
+        self._services: List[BaseService] = []
         self.build()
 
     def build(self) -> "NeuralNetworkManager":
         pipeline_builder = NNPipelineSetup(
             self._pipeline,
             self._video_source,
-            self._runtime,
-            self._config.nn_config,
+            self._config,
             self._model_state,
         )
         self._controller = pipeline_builder.get_controller()
 
-        encoders = EncodersManager(self._config, self._runtime)
+        encoders = EncodersManager(self._config.nn_yaml.model, self._config.constants)
 
         handlers = HandlersManager(
             encoders,
@@ -63,27 +62,29 @@ class NeuralNetworkManager:
             self._controller, handlers, self._video_source.get_frame_cache()
         )
 
-        self._register_services(service_manager.services)
+        self._services = service_manager.services
+
         self._controller.send_embeddings_pair(
             encoders.image_prompt,
             encoders.text_prompt,
             self._config.constants.class_names,
         )
-        self._register_annotations(pipeline_builder.get_annotation_node())
+
+        self._annotations = pipeline_builder.get_annotation_node()
+
         self._tracker = pipeline_builder.get_tracker()
         self._filtered_detections = pipeline_builder.get_detections()
 
         return self
-
-    def _register_services(self, services: List):
-        for service in services:
-            self._config.visualizer.registerService(service.get_name(), service.handle)
-
-    def _register_annotations(self, annotation_node: AnnotationNode):
-        self._config.visualizer.addTopic("Detections", annotation_node.out)
 
     def get_tracker(self):
         return self._tracker
 
     def get_detections(self):
         return self._filtered_detections
+
+    def get_services(self) -> list[BaseService]:
+        return self._services
+
+    def get_annotations(self) -> dai.Node.Output:
+        return self._annotations.out

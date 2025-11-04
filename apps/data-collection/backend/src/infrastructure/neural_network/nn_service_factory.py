@@ -1,6 +1,7 @@
 from core.controllers.nn_controller import YOLONNController
 from infrastructure.frame_cache_node import FrameCacheNode
 from infrastructure.neural_network.handlers_manager import HandlersManager
+from services.base_service import BaseService
 from services.class_update.class_update_service import ClassUpdateService
 from services.threshold_update.threshold_update_service import ThresholdUpdateService
 from services.image_upload.image_upload_service import ImageUploadService
@@ -19,7 +20,7 @@ class NNServiceFactory:
         self.frame_cache = frame_cache
         self.services = self._build_services()
 
-    def _build_services(self):
+    def _build_services(self) -> list[BaseService]:
         return [
             ClassUpdateService(self.controller, self.handlers.class_update_handler),
             ThresholdUpdateService(self.controller),

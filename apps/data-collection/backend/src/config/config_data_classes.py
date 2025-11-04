@@ -2,6 +2,8 @@ from pathlib import Path
 from dataclasses import dataclass
 import depthai as dai
 
+from config.yaml_loader import YamlLoader
+
 
 @dataclass
 class ModelInfo:
@@ -12,15 +14,24 @@ class ModelInfo:
     height: int
     description: dai.NNModelDescription
     archive: dai.NNArchive
+    precision: str = "FP16"
 
 
 @dataclass
-class RuntimeConfig:
-    """Stores runtime configuration (precision, FPS, platform, etc.)."""
+class VideoConfig:
+    """Stores video configuration (resolution, FPS)."""
 
-    precision: str
-    fps_limit: int
-    platform: str
-    model_info: ModelInfo
-    ip: str
-    port: int
+    resolution: list[int]
+    fps: int
+    media_path: str
+    width: int
+    height: int
+
+
+@dataclass
+class NeuralNetworkConfig:
+    """Stores neural network configuration (confidence thresholds, etc.)."""
+
+    nn_yaml: YamlLoader
+    constants: YamlLoader
+    model: ModelInfo

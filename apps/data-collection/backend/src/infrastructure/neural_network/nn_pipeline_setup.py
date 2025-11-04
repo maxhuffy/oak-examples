@@ -5,8 +5,7 @@ from depthai_nodes.node import (
     ImgDetectionsBridge,
 )
 
-from config.config_data_classes import RuntimeConfig
-from config.system_configuration import SystemConfiguration
+from config.config_data_classes import NeuralNetworkConfig
 from infrastructure.neural_network.annotation_node import AnnotationNode
 from core.controllers.nn_controller import YOLONNController
 from core.model_state import ModelState
@@ -18,14 +17,12 @@ class NNPipelineSetup:
         self,
         pipeline: dai.Pipeline,
         video_source: VideoSourceManager,
-        runtime: RuntimeConfig,
-        config: SystemConfiguration,
+        nn_config: NeuralNetworkConfig,
         model_state: ModelState,
     ):
         self._pipeline = pipeline
         self._video_source = video_source
-        self._runtime = runtime
-        self._config = config
+        self._nn_config = nn_config
         self._model_state = model_state
 
         self._det_filter = None
@@ -45,15 +42,15 @@ class NNPipelineSetup:
 
     def _build_nn(self):
         nn = self._pipeline.create(ParsingNeuralNetwork)
-        nn.setNNArchive(self._runtime.model_info.archive)
-        nn.setBackend(self._config.nn.type)
+        nn.setNNArchive(self._nn_config.model.archive)
+        nn.setBackend(self._nn_config.nn_yaml.nn_backend.type)
         nn.setBackendProperties(
             {
-                "runtime": self._config.nn.runtime,
-                "performance_profile": self._config.nn.performance_profile,
+                "runtime": self._nn_config.nn_yaml.nn_backend.runtime,
+                "performance_profile": self._nn_config.nn_yaml.nn_backend.performance_profile,
             }
         )
-        nn.setNumInferenceThreads(self._config.nn.inference_threads)
+        nn.setNumInferenceThreads(self._nn_config.nn_yaml.nn_backend.inference_threads)
         nn.getParser(0).setConfidenceThreshold(0.1)
         self._video_source.get_input_node().link(nn.inputs["images"])
         self._nn = nn
@@ -73,20 +70,22 @@ class NNPipelineSetup:
         nn.inputs["image_prompts"].setReusePreviousMessage(True)
         parser = nn.getParser(0)
         return YOLONNController(
-            img_q, text_q, self._runtime.precision, parser, self._model_state
+            img_q, text_q, self._nn_config.model.precision, parser, self._model_state
         )
 
     def _build_tracker(self) -> dai.node.ObjectTracker:
         tracker = self._pipeline.create(dai.node.ObjectTracker)
         tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
         tracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.UNIQUE_ID)
-        tracker.setTrackingPerClass(self._config.tracker.track_per_class)
-        tracker.setTrackletBirthThreshold(self._config.tracker.birth_threshold)
-        tracker.setTrackletMaxLifespan(self._config.tracker.max_lifespan)
-        tracker.setOcclusionRatioThreshold(
-            self._config.tracker.occlusion_ratio_threshold
+        tracker.setTrackingPerClass(self._nn_config.nn_yaml.tracker.track_per_class)
+        tracker.setTrackletBirthThreshold(
+            self._nn_config.nn_yaml.tracker.birth_threshold
         )
-        tracker.setTrackerThreshold(self._config.tracker.tracker_threshold)
+        tracker.setTrackletMaxLifespan(self._nn_config.nn_yaml.tracker.max_lifespan)
+        tracker.setOcclusionRatioThreshold(
+            self._nn_config.nn_yaml.tracker.occlusion_ratio_threshold
+        )
+        tracker.setTrackerThreshold(self._nn_config.nn_yaml.tracker.tracker_threshold)
         self._video_source.get_input_node().link(tracker.inputTrackerFrame)
         self._video_source.get_input_node().link(tracker.inputDetectionFrame)
         self._filtered_bridge.out.link(tracker.inputDetections)
