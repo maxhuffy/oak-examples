@@ -112,6 +112,7 @@ with dai.Pipeline(device) as pipeline:
     roi_from_face = pipeline.create(ROIFromFace).build(
         disparity_frames=depth_color_transform.out,
         parser_output=nn_with_parser.out,
+        use_eye_roi=args.eye_roi,
     )
     roi_from_face.output_roi.link(measure_distance.roi_input)
 

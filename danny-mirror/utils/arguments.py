@@ -62,6 +62,13 @@ def initialize_argparser():
         action="store_true",
     )
 
+    parser.add_argument(
+        "--eye_roi",
+        help="Use an ROI computed from the two eye keypoints instead of the full face rectangle.",
+        required=False,
+        action="store_true",
+    )
+
     args = parser.parse_args()
 
     return parser, args
