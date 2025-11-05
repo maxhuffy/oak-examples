@@ -6,7 +6,17 @@ def initialize_argparser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.description = "Calcualte spatial coordinates of a ROI on the host and gets depth frames from the device"
+    parser.description = (
+        "Run face detection (e.g., yunet) on the RGB stream and compute spatial coordinates of the detected face using stereo depth on host."
+    )
+
+    parser.add_argument(
+        "-m",
+        "--model",
+        help="HubAI model reference.",
+        default="luxonis/yunet:640x480",
+        type=str,
+    )
 
     parser.add_argument(
         "-d",
@@ -15,6 +25,41 @@ def initialize_argparser():
         required=False,
         default=None,
         type=str,
+    )
+
+    parser.add_argument(
+        "-fps",
+        "--fps_limit",
+        help="FPS limit for the model runtime.",
+        required=False,
+        default=None,
+        type=int,
+    )
+
+    parser.add_argument(
+        "-media",
+        "--media_path",
+        help="Path to a media file to run the model on (otherwise uses the camera).",
+        required=False,
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        "-api",
+        "--api_key",
+        help="HubAI API key to access private model. Alternatively use DEPTHAI_HUB_API_KEY env var.",
+        required=False,
+        default="",
+        type=str,
+    )
+
+    parser.add_argument(
+        "-overlay",
+        "--overlay_mode",
+        help="Overlay model output on the input image when output is an array (depth maps, segmentation).",
+        required=False,
+        action="store_true",
     )
 
     args = parser.parse_args()
