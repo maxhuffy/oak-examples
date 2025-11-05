@@ -138,8 +138,9 @@ with dai.Pipeline(device) as pipeline:
 
     # Create a host-side queue to inspect detections (for debugging/inspection)
     parser_output_queue = nn_with_parser.out.createOutputQueue()
-    last_print_time = time.time()
-    print_interval = 0.5  # seconds
+    # Modularized keypoints printer (throttled)
+    from utils.keypoints_debug import KeypointsPrinter
+    keypoints_printer = KeypointsPrinter(interval_seconds=0.5)
 
     print("Pipeline created.")
     pipeline.start()
@@ -147,29 +148,10 @@ with dai.Pipeline(device) as pipeline:
 
 
     while pipeline.isRunning():
-        # Non-blocking read of detections to print face keypoints (Yunet outputs 5 landmarks)
+        # Non-blocking read of detections to print face keypoints
         det_msg = parser_output_queue.tryGet()
         if det_msg is not None:
-            try:
-                assert isinstance(det_msg, ImgDetectionsExtended)
-                now = time.time()
-                if now - last_print_time >= print_interval:
-                    for idx, det in enumerate(det_msg.detections):
-                        # Print rotated rect summary
-                        rr = det.rotated_rect
-                        print(f"[Det {idx}] center=({rr.center.x:.3f},{rr.center.y:.3f}) size=({rr.size.width:.3f},{rr.size.height:.3f}) ang={rr.angle:.1f}")
-
-                        # Print keypoints if available (normalized coords)
-                        if hasattr(det, "keypoints") and det.keypoints:
-                            kps_norm = ", ".join(
-                                [f"({kp.x:.3f},{kp.y:.3f})" for kp in det.keypoints]
-                            )
-                            print(f"         keypoints_norm: [{kps_norm}]")
-                    print("#" * 10)
-                    last_print_time = now
-            except Exception:
-                # Keep UI responsive even if types differ across models
-                pass
+            keypoints_printer.maybe_print(det_msg)
 
         key = visualizer.waitKey(1)
         if key == ord("q"):
