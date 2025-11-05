@@ -1,8 +1,10 @@
 import os
+import time
 from dotenv import load_dotenv
 
 import depthai as dai
 from depthai_nodes.node import ParsingNeuralNetwork, ImgFrameOverlay, ApplyColormap
+from depthai_nodes import ImgDetectionsExtended, ImgDetectionExtended
 
 from utils.arguments import initialize_argparser
 from utils.input import create_input_node
@@ -72,13 +74,38 @@ with dai.Pipeline(device) as pipeline:
         visualizer.addTopic("Video", nn_with_parser.passthrough, "images")
     visualizer.addTopic("Detections", nn_with_parser.out, "detections")
 
+
+    parser_output_queue = nn_with_parser.out.createOutputQueue()
+    
     print("Pipeline created.")
 
     pipeline.start()
     visualizer.registerPipeline(pipeline)
 
+    # Initialize timing variables for throttled output printing
+    last_print_time = time.time()
+    print_interval = 0.75
+
     while pipeline.isRunning():
+        parser_output: ImgDetectionsExtended = parser_output_queue.get()
+        
+        # Only print every 0.25 seconds to avoid flooding the console
+        current_time = time.time()
+        if current_time - last_print_time >= print_interval:
+            
+            num_of_detections = len(parser_output.detections)
+            if num_of_detections > 0:
+                detection: ImgDetectionExtended = parser_output.detections[0]
+                print(detection.rotated_rect.size.height)
+                print(detection.rotated_rect.size.width)
+                print(detection.rotated_rect.center.x)
+                print(detection.rotated_rect.center.y)
+                print("#"*10)
+            
+            last_print_time = current_time
+
         key = visualizer.waitKey(1)
         if key == ord("q"):
             print("Got q key from the remote connection!")
             break
+
