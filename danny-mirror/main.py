@@ -31,11 +31,24 @@ with dai.Pipeline(device) as pipeline:
     print("Creating pipeline with face detection + auto-ROI...")
 
     # RGB input for NN (camera by default, or media if provided)
-    input_node = create_input_node(
-        pipeline,
-        platform,
-        args.media_path,
-    )
+    # When using camera, explicitly request 640x480 and align StereoDepth to the RGB camera
+    VIDEO_RESOLUTION = (640, 480)
+    if args.media_path:
+        input_node = create_input_node(
+            pipeline,
+            platform,
+            args.media_path,
+        )
+        use_camera = False
+    else:
+        color = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+        frame_type = (
+            dai.ImgFrame.Type.BGR888p if platform == "RVC2" else dai.ImgFrame.Type.BGR888i
+        )
+        input_node = color.requestOutput(
+            VIDEO_RESOLUTION, frame_type, fps=args.fps_limit
+        )
+        use_camera = True
 
     # Load model (default yunet) from Zoo
     model_description = dai.NNModelDescription(f"yolov6_nano_r2_coco.{platform}.yaml")
@@ -78,6 +91,13 @@ with dai.Pipeline(device) as pipeline:
     stereo = pipeline.create(dai.node.StereoDepth).build(
         monoLeft, monoRight, presetMode=dai.node.StereoDepth.PresetMode.DEFAULT
     )
+    # Align depth/disparity to the RGB camera so detections and depth share the same viewpoint
+    try:
+        stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+        if use_camera and platform == "RVC2":
+            stereo.setOutputSize(*VIDEO_RESOLUTION)
+    except Exception:
+        pass
 
     depth_color_transform = pipeline.create(ApplyColormap).build(stereo.disparity)
     depth_color_transform.setColormap(cv2.COLORMAP_JET)
@@ -95,7 +115,7 @@ with dai.Pipeline(device) as pipeline:
     )
     roi_from_face.output_roi.link(measure_distance.roi_input)
 
-    # Visualizer topics
+    # Visualizer topics (Video + Detections)
     if args.overlay_mode:
         apply_colormap_node = pipeline.create(ApplyColormap).build(nn_with_parser.out)
         overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
@@ -105,7 +125,15 @@ with dai.Pipeline(device) as pipeline:
     else:
         visualizer.addTopic("Video", nn_with_parser.passthrough, "images")
     visualizer.addTopic("Detections", nn_with_parser.out, "detections")
-    visualizer.addTopic("Disparity", depth_color_transform.out)
+
+    # Annotate ROI on disparity for visual verification
+    from utils.roi_annotator import ROIAnnotator
+    roi_annot = pipeline.create(ROIAnnotator).build(
+        disparity_frames=depth_color_transform.out
+    )
+    roi_from_face.output_roi.link(roi_annot.roi_input)
+    visualizer.addTopic("Disparity", roi_annot.passthrough)
+    visualizer.addTopic("ROI", roi_annot.annotation_output)
 
     print("Pipeline created.")
     pipeline.start()
