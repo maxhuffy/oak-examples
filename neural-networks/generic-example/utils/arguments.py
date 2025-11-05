@@ -17,7 +17,8 @@ def initialize_argparser():
         "-m",
         "--model",
         help="HubAI model reference.",
-        default="luxonis/yolov6-nano:r2-coco-512x288",
+        # default="luxonis/yolov6-nano:r2-coco-512x288",
+        default="luxonis/yunet:640x480",
         type=str,
     )
 
