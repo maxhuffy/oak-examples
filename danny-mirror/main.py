@@ -132,6 +132,7 @@ with dai.Pipeline(device) as pipeline:
         disparity_frames=depth_color_transform.out
     )
     roi_from_face.output_roi.link(roi_annot.roi_input)
+    measure_distance.output.link(roi_annot.distance_input)
     visualizer.addTopic("Disparity", roi_annot.passthrough)
     visualizer.addTopic("ROI", roi_annot.annotation_output)
 
