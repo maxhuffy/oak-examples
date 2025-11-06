@@ -87,9 +87,15 @@ with dai.Pipeline(device) as pipeline:
     )
     roi_from_face.output_roi.link(measure_distance.roi_input)
 
-    # Annotate XYZ onto 1080p color stream only
+    # Apply a simple vertical flip using the v3 default API, then annotate
+    flip = pipeline.create(dai.node.ImageManip)
+    flip.initialConfig.addFlipHorizontal()
+    flip.setMaxOutputFrameSize(COLOR_RES[0] * COLOR_RES[1] * 3)
+    color_preview.link(flip.inputImage)
+
+    # Annotate XYZ onto vertically flipped 1080p color stream only
     annot = pipeline.create(ColorXYZAnnotator).build(
-        video_frames=color_preview,
+        video_frames=flip.out,
         show_roi=args.show_roi,
         roi_src_size=NN_RES,
     )
