@@ -33,10 +33,21 @@ class ColorXYZAnnotator(dai.node.HostNode):
                 dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImgAnnotations, True)
             ]
         )
-        self._last_spatial: SpatialDistance | None = None
-        self._roi: RegionOfInterest | None = None
+        self._last_spatial = None
+        self._roi = None
+        # Config
+        self._show_roi = False
+        # If set, ROI coords are in this pixel space (w,h) and will be scaled to the output frame
+        self._roi_src_size = None
 
-    def build(self, video_frames: dai.Node.Output) -> "ColorXYZAnnotator":
+    def build(
+        self,
+        video_frames: dai.Node.Output,
+        show_roi: bool = False,
+        roi_src_size = None,
+    ) -> "ColorXYZAnnotator":
+        self._show_roi = show_roi
+        self._roi_src_size = roi_src_size
         self.link_args(video_frames)
         return self
 
@@ -57,12 +68,38 @@ class ColorXYZAnnotator(dai.node.HostNode):
 
         ann = AnnotationHelper()
 
+        # Draw ROI rectangle if requested
+        if self._show_roi and self._roi is not None:
+            # Map ROI to output frame: if roi_src_size provided, scale to current frame
+            if self._roi_src_size is not None:
+                src_w, src_h = self._roi_src_size
+            else:
+                src_w, src_h = width, height
+
+            rel_xmin = self._roi.xmin / float(src_w)
+            rel_ymin = self._roi.ymin / float(src_h)
+            rel_xmax = self._roi.xmax / float(src_w)
+            rel_ymax = self._roi.ymax / float(src_h)
+
+            ann.draw_rectangle(
+                top_left=(rel_xmin, rel_ymin),
+                bottom_right=(rel_xmax, rel_ymax),
+                outline_color=(1, 1, 1, 1),
+                thickness=2,
+            )
+
         # Draw XYZ text
         if self._last_spatial is not None:
             # Position text near ROI if available; otherwise top-left corner
             if self._roi is not None:
-                x_px = self._roi.xmax + 6
-                y_px = self._roi.ymin + 6
+                # If ROI is in a different pixel space than the frame, scale the anchor.
+                if self._roi_src_size is not None:
+                    sx = width / float(self._roi_src_size[0])
+                    sy = height / float(self._roi_src_size[1])
+                else:
+                    sx = sy = 1.0
+                x_px = int(self._roi.xmax * sx) + 6
+                y_px = int(self._roi.ymin * sy) + 6
             else:
                 x_px = int(0.02 * width)
                 y_px = int(0.06 * height)

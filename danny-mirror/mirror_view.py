@@ -88,7 +88,11 @@ with dai.Pipeline(device) as pipeline:
     roi_from_face.output_roi.link(measure_distance.roi_input)
 
     # Annotate XYZ onto 1080p color stream only
-    annot = pipeline.create(ColorXYZAnnotator).build(video_frames=color_preview)
+    annot = pipeline.create(ColorXYZAnnotator).build(
+        video_frames=color_preview,
+        show_roi=args.show_roi,
+        roi_src_size=NN_RES,
+    )
     measure_distance.output.link(annot.distance_input)
     roi_from_face.output_roi.link(annot.roi_input)
 

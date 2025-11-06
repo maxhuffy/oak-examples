@@ -13,6 +13,7 @@ from utils.arguments import initialize_argparser
 from utils.input import create_input_node
 from utils.measure_distance import MeasureDistance, RegionOfInterest
 from utils.roi_from_face import ROIFromFace
+from utils.color_xyz_annotator import ColorXYZAnnotator
 
 
 load_dotenv(override=True)
@@ -122,9 +123,23 @@ with dai.Pipeline(device) as pipeline:
         overlay_frames_node = pipeline.create(ImgFrameOverlay).build(
             nn_with_parser.passthrough, apply_colormap_node.out
         )
-        visualizer.addTopic("Video", overlay_frames_node.out, "images")
+        base_video = overlay_frames_node.out
     else:
-        visualizer.addTopic("Video", nn_with_parser.passthrough, "images")
+        base_video = nn_with_parser.passthrough
+
+    # Optional ROI rectangle overlay on the video stream (works with or without --eye_roi)
+    if args.show_roi:
+        color_annot = pipeline.create(ColorXYZAnnotator).build(
+            video_frames=base_video,
+            show_roi=True,
+            roi_src_size=VIDEO_RESOLUTION,
+        )
+        measure_distance.output.link(color_annot.distance_input)
+        roi_from_face.output_roi.link(color_annot.roi_input)
+        visualizer.addTopic("Video", color_annot.passthrough, "images")
+        visualizer.addTopic("Video-ROI", color_annot.annotation_output)
+    else:
+        visualizer.addTopic("Video", base_video, "images")
     visualizer.addTopic("Detections", nn_with_parser.out, "detections")
 
     # Annotate ROI on disparity for visual verification

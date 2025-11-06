@@ -69,6 +69,13 @@ def initialize_argparser():
         action="store_true",
     )
 
+    parser.add_argument(
+        "--show_roi",
+        help="Overlay the ROI rectangle on the color view (works alone or together with --eye_roi).",
+        required=False,
+        action="store_true",
+    )
+
     args = parser.parse_args()
 
     return parser, args
