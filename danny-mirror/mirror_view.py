@@ -33,8 +33,9 @@ with dai.Pipeline(device) as pipeline:
     NN_RES = (640, 480)
 
     color = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-    # 1080p preview for streaming
-    color_preview = color.requestOutput(COLOR_RES, dai.ImgFrame.Type.NV12, fps=args.fps_limit)
+    # 1080p preview for streaming - use BGR to ensure perspective transform compatibility
+    preview_type = dai.ImgFrame.Type.BGR888p if platform == "RVC2" else dai.ImgFrame.Type.BGR888i
+    color_preview = color.requestOutput(COLOR_RES, preview_type, fps=args.fps_limit)
 
     # Lower-res BGR for the NN (format differs per platform)
     frame_type = dai.ImgFrame.Type.BGR888p if platform == "RVC2" else dai.ImgFrame.Type.BGR888i
@@ -87,9 +88,18 @@ with dai.Pipeline(device) as pipeline:
     )
     roi_from_face.output_roi.link(measure_distance.roi_input)
 
-    # Apply a simple vertical flip using the v3 default API, then annotate
+    # Apply a vertical flip using a 3x3 perspective transform matrix (normalized coordinates)
+    # Matrix H maps [x, y, 1]^T -> [x', y', 1]^T with x' = x, y' = 1 - y:
+    #   H = [[1, 0, 0],
+    #        [0,-1, 1],
+    #        [0, 0, 1]]
     flip = pipeline.create(dai.node.ImageManip)
-    flip.initialConfig.addFlipHorizontal()
+    H_horiz_flip = [
+        -1.0, 0.0, 1.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    ]
+    flip.initialConfig.addTransformPerspective(H_horiz_flip)
     flip.setMaxOutputFrameSize(COLOR_RES[0] * COLOR_RES[1] * 3)
     color_preview.link(flip.inputImage)
 
