@@ -37,6 +37,14 @@ def main():
 	mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 	mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
+	# Quick edge cleanup: remove thin white border artifacts by zeroing a small boundary band
+	edge_pad = 15  # pixels to trim from each edge; adjust if needed
+	h, w = mask.shape[:2]
+	mask[:edge_pad, :] = 0
+	mask[h-edge_pad:, :] = 0
+	mask[:, :edge_pad] = 0
+	mask[:, w-edge_pad:] = 0
+
 	# Save outputs
 	cv2.imwrite(os.path.join(outdir, "diff_gray.png"), gray)
 	out_mask = os.path.join(outdir, "clothes_mask.png")
