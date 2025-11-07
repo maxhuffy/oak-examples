@@ -33,7 +33,7 @@ def main():
 	_, mask = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
 
 	# clean it
-	kernel = np.ones((5, 5), np.uint8)
+	kernel = np.ones((9, 9), np.uint8)
 	mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 	mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
