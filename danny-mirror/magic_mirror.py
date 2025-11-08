@@ -35,9 +35,20 @@ platform = device.getPlatformAsString()
 print(f"Platform: {platform}")
 
 # Magic Mirror Configuration
-REFERENCE_DISTANCE_MM = 600  # Distance where scale = 1.0 (600mm = ~2 feet)
+REFERENCE_DISTANCE_MM = 550  # Distance where scale = 1.0 - INCREASED to make image larger
 MIN_DISTANCE_MM = 300        # Minimum distance to prevent extreme scaling
 MAX_DISTANCE_MM = 2000       # Maximum distance to track
+
+# Camera/Display Alignment Configuration
+# IMPORTANT: Measure and adjust these values for your specific setup!
+CAMERA_OFFSET_Y_MM = 0      # How far above (+) or below (-) mirror center is the camera (in mm)
+CAMERA_OFFSET_X_MM = 0       # How far left (-) or right (+) of mirror center is the camera (in mm)
+DISPLAY_WIDTH_MM = 340       # Physical width of your display in mm
+DISPLAY_HEIGHT_MM = 230      # Physical height of your display in mm
+
+# Image position offset (in pixels) - fine-tune to align with real reflection
+IMAGE_OFFSET_X = 50           # Shift image left (-) or right (+)
+IMAGE_OFFSET_Y = -180         # Shift image up (-) or down (+)  - POSITIVE moves display DOWN
 
 with dai.Pipeline(device) as pipeline:
     print("Creating Magic Mirror pipeline...")
@@ -156,16 +167,21 @@ with dai.Pipeline(device) as pipeline:
     
     # Enhanced smoothing for scale changes (avoid jitter)
     current_scale = 1.0
-    SMOOTHING_FACTOR = 0.01  # Lower = smoother but slower response
+    SMOOTHING_FACTOR = 0.15  # Lower = smoother but slower response
     
     # Moving average filter for depth
     from collections import deque
-    depth_history = deque(maxlen=100)  # Keep last 100 depth readings
-    
+    depth_history = deque(maxlen=20)  # Keep last 20 depth readings
+
     # Keep track of last valid distance
     last_valid_distance = REFERENCE_DISTANCE_MM
     frames_without_detection = 0
     MAX_FRAMES_WITHOUT_DETECTION = 30  # Hold scale for ~1 second at 30fps
+    
+    # Smooth position offsets to prevent jitter
+    current_offset_x = 0.0
+    current_offset_y = 0.0
+    OFFSET_SMOOTHING = 0.15  # Moderate smoothing
     
     while pipeline.isRunning():
         # Get video frame
@@ -220,30 +236,82 @@ with dai.Pipeline(device) as pipeline:
             # Smooth the scale transition
             current_scale += (target_scale - current_scale) * SMOOTHING_FACTOR
             
-            # Apply scaling to the frame
+            # Calculate position offset based on camera placement and eye position
+            # When camera is above the display, we need to shift the image down
+            # to align with where the reflection would appear
+            target_offset_x = float(IMAGE_OFFSET_X)
+            target_offset_y = float(IMAGE_OFFSET_Y)
+            
+            if distance_msg is not None and last_valid_distance > 0:
+                x_mm = distance_msg.spatials.x
+                y_mm = distance_msg.spatials.y
+                
+                # Validate spatial coordinates to prevent extreme jumps
+                MAX_SPATIAL_COORD = 500  # Maximum reasonable X/Y coordinate in mm
+                if (not np.isnan(x_mm) and not np.isnan(y_mm) and 
+                    abs(x_mm) < MAX_SPATIAL_COORD and abs(y_mm) < MAX_SPATIAL_COORD):
+                    
+                    # Calculate parallax offset due to camera position
+                    # This accounts for the fact that camera sees from a different point than mirror center
+                    if last_valid_distance > 0:
+                        # Convert camera offset to pixel offset based on distance and scale
+                        parallax_scale = (REFERENCE_DISTANCE_MM / last_valid_distance)
+                        
+                        # Clamp parallax scale to reasonable range
+                        parallax_scale = max(0.5, min(2.0, parallax_scale))
+                        
+                        target_offset_x += (CAMERA_OFFSET_X_MM / DISPLAY_WIDTH_MM) * w * parallax_scale
+                        target_offset_y += (CAMERA_OFFSET_Y_MM / DISPLAY_HEIGHT_MM) * h * parallax_scale
+                        
+                        # DISABLED: Viewer position adjustment causes alignment issues when moving
+                        # Uncomment these lines if you want dynamic position tracking (experimental)
+                        # target_offset_x -= x_mm * 0.5
+                        # target_offset_y -= y_mm * 0.5
+            
+            # Clamp target offsets to prevent extreme values
+            MAX_OFFSET = h*10  # Allow shift up to full frame height/width
+            target_offset_x = max(-MAX_OFFSET, min(MAX_OFFSET, target_offset_x))
+            target_offset_y = max(-MAX_OFFSET, min(MAX_OFFSET, target_offset_y))
+            
+            # Smooth the offset transitions to prevent jitter
+            current_offset_x += (target_offset_x - current_offset_x) * OFFSET_SMOOTHING
+            current_offset_y += (target_offset_y - current_offset_y) * OFFSET_SMOOTHING
+            
+            # Convert to integers for pixel operations
+            pixel_offset_x = int(current_offset_x)
+            pixel_offset_y = int(current_offset_y)
+            
+            # Apply scaling first
             if current_scale != 1.0:
-                # Calculate new dimensions
                 new_w = int(w * current_scale)
                 new_h = int(h * current_scale)
-                
-                # Resize the frame
-                scaled_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                
-                # Create output frame (same size as original)
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            
+            # Apply translation (offset) using warpAffine - this allows arbitrary shifts
+            if pixel_offset_x != 0 or pixel_offset_y != 0:
+                # Create translation matrix: [1, 0, tx], [0, 1, ty]
+                # Negative Y offset moves image UP on screen
+                translation_matrix = np.float32([[1, 0, pixel_offset_x], [0, 1, pixel_offset_y]])
+                frame = cv2.warpAffine(frame, translation_matrix, (frame.shape[1], frame.shape[0]))
+            
+            # Crop/pad to original size if needed
+            current_h, current_w = frame.shape[:2]
+            if current_h != h or current_w != w:
                 output_frame = np.zeros((h, w, 3), dtype=np.uint8)
                 
-                # Calculate crop/paste position (center the scaled image)
-                if current_scale > 1.0:
-                    # Image is larger - crop from center
-                    start_x = (new_w - w) // 2
-                    start_y = (new_h - h) // 2
-                    output_frame = scaled_frame[start_y:start_y+h, start_x:start_x+w]
-                else:
-                    # Image is smaller - paste in center
-                    start_x = (w - new_w) // 2
-                    start_y = (h - new_h) // 2
-                    output_frame[start_y:start_y+new_h, start_x:start_x+new_w] = scaled_frame
+                # Center crop or center paste
+                start_y = max(0, (current_h - h) // 2)
+                start_x = max(0, (current_w - w) // 2)
+                end_y = min(current_h, start_y + h)
+                end_x = min(current_w, start_x + w)
                 
+                crop_h = end_y - start_y
+                crop_w = end_x - start_x
+                
+                paste_y = (h - crop_h) // 2
+                paste_x = (w - crop_w) // 2
+                
+                output_frame[paste_y:paste_y+crop_h, paste_x:paste_x+crop_w] = frame[start_y:end_y, start_x:end_x]
                 frame = output_frame
             
             # Optional: Draw debug info
@@ -257,6 +325,8 @@ with dai.Pipeline(device) as pipeline:
                 cv2.putText(frame, f"Distance: {z_mm:.0f}mm", (10, info_y),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 cv2.putText(frame, f"Scale: {current_scale:.2f}x", (10, info_y + 30),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Offset: X={pixel_offset_x} Y={pixel_offset_y}", (10, info_y + 60),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
             # Calculate and display FPS
@@ -275,6 +345,11 @@ with dai.Pipeline(device) as pipeline:
         
         # Handle key presses
         key = cv2.waitKey(1)
+        
+        # Debug: print key code for any key press (comment out once calibrated)
+        if key != -1 and key != 255:
+            print(f"Key pressed: {key}")
+        
         if key == ord("q"):
             print("Quitting...")
             break
@@ -285,12 +360,74 @@ with dai.Pipeline(device) as pipeline:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
             else:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        elif key == ord("s"):
-            # Save screenshot
+        elif key == ord("p"):
+            # Save screenshot (changed from 's' to avoid conflict)
             if video_msg is not None:
                 filename = f"mirror_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
+        
+        # Real-time calibration controls
+        # Arrow keys (codes may vary by system)
+        elif key == 82 or key == 2490368:  # Up arrow
+            IMAGE_OFFSET_Y -= 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == 84 or key == 2621440:  # Down arrow
+            IMAGE_OFFSET_Y += 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == 81 or key == 2424832:  # Left arrow
+            IMAGE_OFFSET_X -= 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == 83 or key == 2555904:  # Right arrow
+            IMAGE_OFFSET_X += 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        
+        # Alternative letter keys for adjustment
+        elif key == ord("w"):  # W = move display UP
+            IMAGE_OFFSET_Y -= 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == ord("s"):  # S = move display DOWN
+            IMAGE_OFFSET_Y += 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == ord("a"):  # A = move display LEFT
+            IMAGE_OFFSET_X -= 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        elif key == ord("d"):  # D = move display RIGHT
+            IMAGE_OFFSET_X += 5
+            print(f"Image offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
+        
+        # Scale adjustment controls
+        elif key == ord("=") or key == ord("+"):  # + or = to increase scale (make image larger)
+            REFERENCE_DISTANCE_MM += 50
+            print(f"Reference distance: {REFERENCE_DISTANCE_MM}mm (larger image)")
+        elif key == ord("-") or key == ord("_"):  # - to decrease scale (make image smaller)
+            REFERENCE_DISTANCE_MM = max(100, REFERENCE_DISTANCE_MM - 50)
+            print(f"Reference distance: {REFERENCE_DISTANCE_MM}mm (smaller image)")
+        
+        elif key == ord("r"):
+            # Reset offsets
+            IMAGE_OFFSET_X = 0
+            IMAGE_OFFSET_Y = 0
+            print("Image offsets reset to 0")
+        elif key == ord("h"):
+            # Show help
+            print("\n=== CALIBRATION CONTROLS ===")
+            print("Arrow Keys OR W/A/S/D: Adjust image position")
+            print("+/=: Increase scale (make image larger)")
+            print("-: Decrease scale (make image smaller)")
+            print("[ or {: Decrease horizontal scale (narrower)")
+            print("] or }: Increase horizontal scale (wider)")
+            print("R: Reset position offsets")
+            print("F: Toggle fullscreen")
+            print("P: Save screenshot")
+            print("Q: Quit (and show final values)")
+            print("H: Show this help")
+            print("===========================\n")
     
     cv2.destroyAllWindows()
     print("Magic Mirror closed!")
+    print(f"Final calibration values:")
+    print(f"  IMAGE_OFFSET_X = {IMAGE_OFFSET_X}")
+    print(f"  IMAGE_OFFSET_Y = {IMAGE_OFFSET_Y}")
+    print(f"  REFERENCE_DISTANCE_MM = {REFERENCE_DISTANCE_MM}")
+    print(f"  HORIZONTAL_SCALE_FACTOR = {HORIZONTAL_SCALE_FACTOR:.2f}")
