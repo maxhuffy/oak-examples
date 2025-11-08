@@ -1,12 +1,15 @@
 import os
+from pathlib import Path
+
 import requests
 
 # 1. Put your Pixelcut API key here (from https://developer.pixelcut.ai/)
 PIXELCUT_API_KEY = os.environ.get("PIXELCUT_API_KEY", "sk_d9c026c715664ae4955fe09a4a1b48c6")
 
 # 2. Local image paths
-PERSON_IMAGE_PATH = "oak-examples\danny-mirror\try-on-clothes\calibration_images\oak_capture_20251107_212523_886212.png"         # your photo
-GARMENT_IMAGE_PATH = "oak-examples\danny-mirror\try-on-clothes\pixel-cut-input\puffer_jacket.png"     # photo of the clothes
+BASE_DIR = Path(__file__).resolve().parent
+PERSON_IMAGE_PATH = BASE_DIR / "calibration_images" / "3.png"  # your photo
+GARMENT_IMAGE_PATH = BASE_DIR / "pixel-cut-input" / "puffer_jacket.png"  # photo of the clothes
 
 API_URL = "https://api.developer.pixelcut.ai/v1/try-on"
 
