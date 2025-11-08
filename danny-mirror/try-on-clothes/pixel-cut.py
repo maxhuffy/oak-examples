@@ -6,7 +6,7 @@ PIXELCUT_API_KEY = os.environ.get("PIXELCUT_API_KEY", "sk_d9c026c715664ae4955fe0
 
 # 2. Local image paths
 PERSON_IMAGE_PATH = "me.png"         # your photo
-GARMENT_IMAGE_PATH = "shirt.png"     # photo of the clothes
+GARMENT_IMAGE_PATH = "pjs_2.jpg"     # photo of the clothes
 
 API_URL = "https://api.developer.pixelcut.ai/v1/try-on"
 
