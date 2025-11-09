@@ -16,6 +16,7 @@ IMAGE PROCESSING FLOW:
 """
 
 import os
+import json
 import time
 from dotenv import load_dotenv
 
@@ -31,6 +32,18 @@ from utils.measure_distance import MeasureDistance, RegionOfInterest
 from utils.roi_from_face import ROIFromFace
 
 
+# Mouse callback for auto-calibration point picking (accepts 5 args)
+def _on_mouse(event, x, y, flags, param):
+    state = param if isinstance(param, dict) else None
+    if state is None or not state.get("active", False):
+        return
+    if event == cv2.EVENT_LBUTTONDOWN:
+        pts = state.setdefault("points", [])
+        if len(pts) < 2:
+            pts.append((int(x), int(y)))
+        if len(pts) > 2:
+            state["points"] = pts[-2:]
+
 load_dotenv(override=True)
 
 _, args = initialize_argparser()
@@ -45,7 +58,7 @@ print(f"Platform: {platform}")
 # Magic Mirror Configuration
 REFERENCE_DISTANCE_MM = 1800  # Distance where scale = 1.0 (TRUE life-size at this distance)
 MIN_DISTANCE_MM = 300        # Minimum distance to prevent extreme scaling
-MAX_DISTANCE_MM = 2500       # Maximum distance to track (increased to handle far detections)
+MAX_DISTANCE_MM = 6000       # Maximum distance to track (increased to handle far detections)
 MIN_SCALE = 0.2              # Minimum allowed scale (allows smaller for far distances)
 MAX_SCALE = 3.0              # Maximum allowed scale (prevents image from becoming too large)
 
@@ -56,21 +69,38 @@ DISPLAY_PHYSICAL_HEIGHT_MM = 1100   # Physical height of display in millimeters
 # Scale multiplier for 1:1 life-size at reference distance
 # CALIBRATED FROM IMAGE: At 1500mm with scale frozen at 1.0, image filled ~50% of screen
 # This means we need roughly 2× larger → setting to 2.2 for safety margin
-LIFE_SIZE_SCALE_MULTIPLIER = 2.2
+LIFE_SIZE_SCALE_MULTIPLIER = 1.55
 
 # Camera/Display Alignment Configuration
 # MEASURED: Camera is ~7cm above display top + ~3cm tape = ~100mm total
-CAMERA_OFFSET_Y_MM = 60      # Camera/eyes vertical delta; positive moves image up
+CAMERA_OFFSET_Y_MM = 60     # Camera is 100mm above top of display
 CAMERA_OFFSET_X_MM = 0       # Centered horizontally
 
 # Calibration factor: Measured from ruler in image
 # 22 inches (558.8mm) vertical ruler spans roughly 1700 pixels
 # Actual pixels/mm ≈ 3.04 (vs theoretical 3.49 from 3840/1100)
-PIXELS_PER_MM = 3.49  # Fallback; dynamic per-axis computed from display size below
+PIXELS_PER_MM = 3.04         
+
+# Optional calibrated distance scaling model: s(z) = 1 + k*(r-1) + q*(r-1)^2
+# where r = REFERENCE_DISTANCE_MM / z. Loaded from calibration.json if present.
+SCALE_MODEL_K = None
+SCALE_MODEL_Q = None
+try:
+    _cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+    if os.path.exists(_cal_path):
+        with open(_cal_path, "r", encoding="utf-8") as _f:
+            _cal = json.load(_f)
+        if isinstance(_cal, dict):
+            if "scale_model_k" in _cal:
+                SCALE_MODEL_K = float(_cal["scale_model_k"])  # may raise
+            if "scale_model_q" in _cal:
+                SCALE_MODEL_Q = float(_cal["scale_model_q"])  # may raise
+except Exception:
+    pass
 
 # Fine-tune offset (in pixels) - use arrow keys during calibration to adjust
-IMAGE_OFFSET_X = 0           # Additional shift left (-) or right (+)
-IMAGE_OFFSET_Y = 0          # Shift image up (-) or down (+)  - POSITIVE moves display DOWN
+IMAGE_OFFSET_X = -290           # Additional shift left (-) or right (+)
+IMAGE_OFFSET_Y = -1780          # Shift image up (-) or down (+)  - POSITIVE moves display DOWN
 
 with dai.Pipeline(device) as pipeline:
     print("Creating Magic Mirror pipeline...")
@@ -172,6 +202,8 @@ with dai.Pipeline(device) as pipeline:
     video_queue = nn_with_parser.passthrough.createOutputQueue(maxSize=4, blocking=False)
     detections_queue = nn_with_parser.out.createOutputQueue(maxSize=4, blocking=False)
     distance_queue = measure_distance.output.createOutputQueue(maxSize=4, blocking=False)
+    depth_vis_queue = depth_color_transform.out.createOutputQueue(maxSize=2, blocking=False)
+    depth_raw_queue = stereo.depth.createOutputQueue(maxSize=2, blocking=False)
 
     print("Pipeline created. Starting Magic Mirror...")
     pipeline.start()
@@ -179,6 +211,9 @@ with dai.Pipeline(device) as pipeline:
     # OpenCV window - setup for second monitor
     window_name = "Magic Mirror"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    # Auto-calibrate (10cm) mouse state
+    mouse_state = {"active": False, "points": []}
+    cv2.setMouseCallback(window_name, _on_mouse, mouse_state)
     
     # Get display size - default to portrait 4K
     DISPLAY_WIDTH = 2160   # Portrait width
@@ -243,13 +278,22 @@ with dai.Pipeline(device) as pipeline:
     
     # Enhanced smoothing for scale changes (avoid jitter)
     current_scale = 1.0
-    SMOOTHING_FACTOR = 0.5  # Even faster response to recover from bad readings
+    SMOOTHING_FACTOR = 0.15  # Even faster response to recover from bad readings
     
     # Moving average filter for depth - reduced for faster response
     from collections import deque
-    depth_history = deque(maxlen=3)  # Keep only last 3 readings for faster response
+    depth_history = deque(maxlen=5)  # Keep only last 3 readings for faster response
 
+    # Robust median history for outlier rejection
+    z_median_history = deque(maxlen=15)
+    Z_OUTLIER_MM = 300.0
+    Z_OUTLIER_RATIO = 1.25
     # Keep track of last valid distance - start at reference so image stays at 1.0 scale initially
+    # Relative deadband to ignore tiny scale changes
+    SCALE_DEADBAND_REL = 0.02
+    # Only allow decreases when large and sustained
+    DECREASE_HYSTERESIS_REL = 0.04
+    DECREASE_HYSTERESIS_FRAMES = 3
     last_valid_distance = REFERENCE_DISTANCE_MM
     frames_without_detection = 0
     MAX_FRAMES_WITHOUT_DETECTION = 999999  # Keep scale indefinitely until face detected
@@ -262,8 +306,40 @@ with dai.Pipeline(device) as pipeline:
     # Store recent detections for visualization (lingering circles)
     from collections import deque
     recent_detections = deque(maxlen=90)  # Keep last 90 frames (3 seconds at 30fps) for longer visibility
-    # Track last reliable face center in camera pixels (640x480, pre-flip)
-    last_face_center_px = None
+    
+    # Live-tunable parameters (ensure defined for auto-calibration and UI)
+    # Latest raw depth frame (uint16 mm) for direct sampling
+    last_depth_raw = None
+    try:
+        distance_scale_weight_live = float(getattr(args, "distance_scale_weight", 0.3))
+    except Exception:
+        distance_scale_weight_live = 0.3
+    try:
+        parallax_weight_x_live = float(getattr(args, "parallax_weight_x", 1.0))
+    except Exception:
+        parallax_weight_x_live = 0.0
+    try:
+        parallax_weight_y_live = float(getattr(args, "parallax_weight_y", 1.0))
+    except Exception:
+        parallax_weight_y_live = 0.0
+    try:
+        parallax_distance_exp_live = float(getattr(args, "parallax_distance_scale", 1.0))
+    except Exception:
+        parallax_distance_exp_live = 1.0
+    use_world_parallax = True
+    show_ruler = False
+    show_content_ruler = False
+    lock_mode = False
+    show_depth_inset = False
+    # Hysteresis counter for allowing decreases
+    decrease_pending_frames = 0
+    show_depth_inset = False
+    # Throttled console prints for fixed ROI depth sanity check
+    last_cam_roi = None
+    last_fixed_roi_print_z = None
+    last_fixed_roi_print_time = 0.0
+    last_raw_z = None
+    last_clamped_z = None
     
     # Calibration mode
     calibration_mode = False
@@ -271,6 +347,17 @@ with dai.Pipeline(device) as pipeline:
     saved_distance = None
     fixed_roi_mode = False  # Toggle for using fixed center ROI instead of face tracking
     freeze_scale = False  # Toggle to lock scale at 1.0 for calibration
+    # Auto-calibrate 100mm state
+    auto_calibrate_mode = False
+    auto_saved_state = None
+    # Manual ROI selection for calibration (non-face targets)
+    manual_roi_select_mode = False
+    manual_roi_points = []  # two display-space points
+    manual_roi_active = False
+    # Multi-depth calibration wizard state
+    multi_cal_mode = False
+    multi_samples = []  # list of dicts: {"z": z_mm, "measured_px": px, "axis": "x"|"y"}
+    collecting_sample = False
     
     print("\n=== MAGIC MIRROR CALIBRATION ===")
     print("Press 'C' to enter calibration mode")
@@ -325,15 +412,13 @@ with dai.Pipeline(device) as pipeline:
                         center_x = (x1 + x2) / 2
                         center_y = (y1 + y2) / 2
                         radius = max(width, height) / 2 + padding
-
+                        
                         recent_detections.append({
                             'center_x': center_x,
                             'center_y': center_y,
                             'radius': radius,
                             'confidence': detection.confidence if hasattr(detection, 'confidence') else 1.0
                         })
-                        # Update last face center for parallax tracking
-                        last_face_center_px = (center_x, center_y)
                         
                 except Exception as e:
                     # Skip detections that fail to process
@@ -343,6 +428,13 @@ with dai.Pipeline(device) as pipeline:
         if video_msg is not None:
             # Convert to OpenCV format
             frame = video_msg.getCvFrame()
+            # Update latest raw depth frame for host-side sampling
+            try:
+                depth_raw_msg = depth_raw_queue.tryGet()
+                if depth_raw_msg is not None:
+                    last_depth_raw = depth_raw_msg.getFrame()
+            except Exception:
+                pass
             
             # Camera is landscape orientation (correct for face detection)
             # Apply horizontal flip for mirror effect
@@ -354,30 +446,68 @@ with dai.Pipeline(device) as pipeline:
             # Calculate scale based on depth FIRST (before any resizing)
             target_scale = current_scale  # Default to current scale
             
-            distance_scale_weight = getattr(args, "distance_scale_weight", 0.0)
             if distance_msg is not None:
                 z_mm = distance_msg.spatials.z
+                z_raw_for_print = z_mm
                 
                 # Only use valid depth readings (not NaN or 0)
                 if z_mm > 0 and not np.isnan(z_mm):
-                    # Add to history and compute moving average
-                    depth_history.append(z_mm)
+                    # Robust outlier rejection using running median
+                    candidate_z = float(z_mm)
+                    if len(z_median_history) > 3:
+                        med = float(np.median(z_median_history))
+                        if med > 0:
+                            if abs(candidate_z - med) > Z_OUTLIER_MM or (candidate_z > med * Z_OUTLIER_RATIO or candidate_z < med / Z_OUTLIER_RATIO):
+                                candidate_z = med
+                    z_median_history.append(candidate_z)
+                    depth_history.append(candidate_z)
                     z_mm = sum(depth_history) / len(depth_history)
                     
                     # Clamp distance to reasonable range
                     z_mm = max(MIN_DISTANCE_MM, min(MAX_DISTANCE_MM, z_mm))
+                    # Record latest raw/clamped values for overlays (for both fixed/manual ROI)
+                    last_raw_z = z_raw_for_print
+                    last_clamped_z = z_mm
                     
                     # Update last valid distance
                     last_valid_distance = z_mm
                     frames_without_detection = 0
                     
-                    # Scale inversely proportional to distance, softened via weight (unless frozen)
+                    # Scale vs distance (unless frozen)
                     if not freeze_scale:
-                        distance_factor = REFERENCE_DISTANCE_MM / z_mm
-                        # Clamp factor range before weighting
-                        distance_factor = max(MIN_SCALE, min(MAX_SCALE, distance_factor))
-                        # Interpolate toward 1.0 based on weight
-                        target_scale = 1.0 + distance_scale_weight * (distance_factor - 1.0)
+                        r = REFERENCE_DISTANCE_MM / z_mm
+                        if SCALE_MODEL_K is not None or SCALE_MODEL_Q is not None:
+                            k = SCALE_MODEL_K or 0.0
+                            q = SCALE_MODEL_Q or 0.0
+                            target_scale = 1.0 + k * (r - 1.0) + q * ((r - 1.0) ** 2)
+                        else:
+                            # Fallback to simple inverse
+                            target_scale = r
+                        # Clamp scale to prevent extreme values
+                        target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
+                        if target_scale > current_scale:
+                            max_step_up = 0.03
+                            target_scale = min(current_scale + max_step_up, target_scale)
+                        else:
+                            max_step_down = 0.02
+                            target_scale = max(current_scale - max_step_down, target_scale)
+
+                    # Print raw vs smoothed depth when fixed ROI mode is active (sanity check)
+                    if fixed_roi_mode:
+                        now_ts = time.time()
+                        if (
+                            last_fixed_roi_print_z is None
+                            or abs(z_raw_for_print - last_fixed_roi_print_z) >= 10
+                            or (now_ts - last_fixed_roi_print_time) > 0.5
+                        ):
+                            try:
+                                print(f"[Fixed ROI] RawZ:{z_raw_for_print:.0f} mm  SmoothedZ:{z_mm:.0f} mm")
+                            except Exception:
+                                pass
+                            last_fixed_roi_print_z = z_raw_for_print
+                            last_fixed_roi_print_time = now_ts
+                            last_raw_z = z_raw_for_print
+                            last_clamped_z = z_mm
                     else:
                         # Scale frozen at 1.0 for calibration
                         target_scale = 1.0
@@ -386,23 +516,71 @@ with dai.Pipeline(device) as pipeline:
                     frames_without_detection += 1
                     if frames_without_detection < MAX_FRAMES_WITHOUT_DETECTION:
                         if not freeze_scale:
-                            distance_factor = REFERENCE_DISTANCE_MM / last_valid_distance
-                            distance_factor = max(MIN_SCALE, min(MAX_SCALE, distance_factor))
-                            target_scale = 1.0 + distance_scale_weight * (distance_factor - 1.0)
+                            r = REFERENCE_DISTANCE_MM / last_valid_distance
+                            if SCALE_MODEL_K is not None or SCALE_MODEL_Q is not None:
+                                k = SCALE_MODEL_K or 0.0
+                                q = SCALE_MODEL_Q or 0.0
+                                target_scale = 1.0 + k * (r - 1.0) + q * ((r - 1.0) ** 2)
+                            else:
+                                target_scale = r
+                            target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
+                        if target_scale > current_scale:
+                            max_step_up = 0.03
+                            target_scale = min(current_scale + max_step_up, target_scale)
                         else:
+                            max_step_down = 0.02
+                            target_scale = max(current_scale - max_step_down, target_scale)
+                        if freeze_scale:
                             target_scale = 1.0
             else:
                 # No distance message, use last known distance
                 frames_without_detection += 1
                 if frames_without_detection < MAX_FRAMES_WITHOUT_DETECTION:
                     if not freeze_scale:
-                        distance_factor = REFERENCE_DISTANCE_MM / last_valid_distance
-                        distance_factor = max(MIN_SCALE, min(MAX_SCALE, distance_factor))
-                        target_scale = 1.0 + distance_scale_weight * (distance_factor - 1.0)
+                        r = REFERENCE_DISTANCE_MM / last_valid_distance
+                        if SCALE_MODEL_K is not None or SCALE_MODEL_Q is not None:
+                            k = SCALE_MODEL_K or 0.0
+                            q = SCALE_MODEL_Q or 0.0
+                            target_scale = 1.0 + k * (r - 1.0) + q * ((r - 1.0) ** 2)
+                        else:
+                            target_scale = r
+                        target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
+                        if target_scale > current_scale:
+                            max_step_up = 0.03
+                            target_scale = min(current_scale + max_step_up, target_scale)
+                        else:
+                            max_step_down = 0.02
+                            target_scale = max(current_scale - max_step_down, target_scale)
                     else:
                         target_scale = 1.0
             
+            # Apply deadband and asymmetric hysteresis before smoothing
+            try:
+                rel = abs(target_scale - current_scale) / max(current_scale, 1e-6)
+            except Exception:
+                rel = 0.0
+            if rel < SCALE_DEADBAND_REL:
+                target_scale = current_scale
+
+            if target_scale < current_scale:
+                rel_dec = (current_scale - target_scale) / max(current_scale, 1e-6)
+                if rel_dec >= DECREASE_HYSTERESIS_REL:
+                    decrease_pending_frames += 1
+                else:
+                    decrease_pending_frames = 0
+                if decrease_pending_frames < DECREASE_HYSTERESIS_FRAMES:
+                    target_scale = current_scale
+            else:
+                decrease_pending_frames = 0
+
             # Smooth the scale transition
+            # Apply deadband to avoid micro jitter
+            try:
+                rel = abs(target_scale - current_scale) / max(current_scale, 1e-6)
+            except Exception:
+                rel = 0.0
+            if rel < SCALE_DEADBAND_REL:
+                target_scale = current_scale
             current_scale += (target_scale - current_scale) * SMOOTHING_FACTOR
             
             # === SIMPLIFIED TRUE 1:1 SCALING ===
@@ -448,43 +626,20 @@ with dai.Pipeline(device) as pipeline:
             target_offset_y = float(IMAGE_OFFSET_Y)
             
             if last_valid_distance > 0:
+                # SIMPLIFIED: Use constant offset regardless of distance
+                # In a real mirror, the camera offset creates a fixed parallax that doesn't 
+                # change much with distance (unlike the scaling which does change)
+                
                 # Camera above your eye line means image should shift UP (negative Y in OpenCV)
-                # Compute pixels-per-mm dynamically from the chosen display
-                ppmm_y = (DISPLAY_HEIGHT / DISPLAY_PHYSICAL_HEIGHT_MM) if DISPLAY_PHYSICAL_HEIGHT_MM else PIXELS_PER_MM
-                ppmm_x = (DISPLAY_WIDTH / DISPLAY_PHYSICAL_WIDTH_MM) if DISPLAY_PHYSICAL_WIDTH_MM else PIXELS_PER_MM
-
-                # Baseline static camera/display offset
-                y_offset_pixels = -CAMERA_OFFSET_Y_MM * ppmm_y
-                x_offset_pixels = -CAMERA_OFFSET_X_MM * ppmm_x
-
+                y_offset_pixels = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
+                x_offset_pixels = -CAMERA_OFFSET_X_MM * PIXELS_PER_MM
+                # If scale is frozen (Z), suppress camera baseline offsets so total offset can be zeroed
+                if freeze_scale:
+                    y_offset_pixels = 0
+                    x_offset_pixels = 0
+                
                 target_offset_x += x_offset_pixels
                 target_offset_y += y_offset_pixels
-
-                # Dynamic parallax from eye/head position (use face center in pixels for stability)
-                try:
-                    parallax_wx = getattr(args, "parallax_weight_x", 1.0)
-                    parallax_wy = getattr(args, "parallax_weight_y", 1.0)
-                    parallax_exp = getattr(args, "parallax_distance_scale", 1.0)
-                    # Prefer the filtered last_valid_distance for stability
-                    parallax_factor = (REFERENCE_DISTANCE_MM / last_valid_distance)
-                    if parallax_exp != 1.0:
-                        parallax_factor = parallax_factor ** parallax_exp
-                    if last_face_center_px is not None:
-                        # Convert detection center to mirrored camera coords
-                        cam_cx, cam_cy = last_face_center_px
-                        mirror_cx = (orig_w - cam_cx)
-                        mirror_cy = cam_cy
-                        # delta from image center in camera pixels
-                        dx_cam = (orig_w / 2.0) - mirror_cx
-                        dy_cam = (orig_h / 2.0) - mirror_cy
-                        # scale to final display pixels
-                        dx_disp = dx_cam * combined_scale
-                        dy_disp = dy_cam * combined_scale
-                        # apply distance-aware parallax
-                        target_offset_x += parallax_wx * parallax_factor * dx_disp
-                        target_offset_y += parallax_wy * parallax_factor * dy_disp
-                except Exception:
-                    pass
             
             # Clamp target offsets to prevent extreme values
             MAX_OFFSET = DISPLAY_HEIGHT * 2
@@ -546,6 +701,86 @@ with dai.Pipeline(device) as pipeline:
                 output_frame[dst_y_start:dst_y_end, dst_x_start:dst_x_end] = frame[src_y_start:src_y_end, src_x_start:src_x_end]
             
             frame = output_frame
+
+            # Manual ROI override during calibration: map display rectangle to camera ROI
+            if manual_roi_active and (auto_calibrate_mode or multi_cal_mode) and len(manual_roi_points) == 2:
+                try:
+                    (dx1, dy1), (dx2, dy2) = manual_roi_points
+                    dx1 = max(0, min(DISPLAY_WIDTH - 1, int(dx1)))
+                    dx2 = max(0, min(DISPLAY_WIDTH - 1, int(dx2)))
+                    dy1 = max(0, min(DISPLAY_HEIGHT - 1, int(dy1)))
+                    dy2 = max(0, min(DISPLAY_HEIGHT - 1, int(dy2)))
+                    x_min_disp, x_max_disp = sorted([dx1, dx2])
+                    y_min_disp, y_max_disp = sorted([dy1, dy2])
+                    # Map display coords to resized-frame coords (account paste + clipping)
+                    def map_disp_to_resized(xd, yd):
+                        xr = src_x_start + max(0, min(current_w, xd - dst_x_start))
+                        yr = src_y_start + max(0, min(current_h, yd - dst_y_start))
+                        return xr, yr
+                    rx1, ry1 = map_disp_to_resized(x_min_disp, y_min_disp)
+                    rx2, ry2 = map_disp_to_resized(x_max_disp, y_max_disp)
+                    # Back to original (pre-resize) camera coords
+                    sx1 = int(rx1 / max(1e-6, combined_scale))
+                    sy1 = int(ry1 / max(1e-6, combined_scale))
+                    sx2 = int(rx2 / max(1e-6, combined_scale))
+                    sy2 = int(ry2 / max(1e-6, combined_scale))
+                    # Undo horizontal flip
+                    cam_x1 = max(0, min(orig_w - 1, orig_w - sx2))
+                    cam_x2 = max(0, min(orig_w - 1, orig_w - sx1))
+                    cam_y1 = max(0, min(orig_h - 1, sy1))
+                    cam_y2 = max(0, min(orig_h - 1, sy2))
+                    if cam_x2 > cam_x1 and cam_y2 > cam_y1:
+                        measure_distance.roi_input.send(RegionOfInterest(cam_x1, cam_y1, cam_x2, cam_y2))
+                        cv2.rectangle(frame, (x_min_disp, y_min_disp), (x_max_disp, y_max_disp), (0, 200, 255), 4)
+                        last_cam_roi = (int(cam_x1), int(cam_y1), int(cam_x2), int(cam_y2))
+                        if last_raw_z is not None:
+                            cv2.putText(frame, f'RawZ:{last_raw_z:.0f} Clamped:{(last_clamped_z or 0):.0f}',
+                                        (x_min_disp, min(DISPLAY_HEIGHT-10, y_max_disp+30)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+                except Exception:
+                    pass
+
+            # Show manual ROI rectangle even when not actively calibrating (visual confirmation)
+            if manual_roi_active and not (auto_calibrate_mode or multi_cal_mode) and len(manual_roi_points) == 2:
+                try:
+                    (dx1, dy1), (dx2, dy2) = manual_roi_points
+                    x_min_disp, x_max_disp = sorted([int(dx1), int(dx2)])
+                    y_min_disp, y_max_disp = sorted([int(dy1), int(dy2)])
+                    cv2.rectangle(frame, (x_min_disp, y_min_disp), (x_max_disp, y_max_disp), (0, 200, 255), 3)
+                    cv2.putText(frame, "Manual ROI armed (press G or I)",
+                                (x_min_disp, max(30, y_min_disp - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+                except Exception:
+                    pass
+
+            # Draw fixed center ROI rectangle when fixed ROI mode is active
+            if fixed_roi_mode:
+                try:
+                    # Center ROI is in camera coords before flip
+                    cx1, cy1, cx2, cy2 = 240, 180, 400, 300
+                    # Mirror horizontally to display camera
+                    mx1, mx2 = (orig_w - cx2), (orig_w - cx1)
+                    my1, my2 = cy1, cy2
+                    # Scale to resized
+                    sx1 = int(mx1 * combined_scale)
+                    sy1 = int(my1 * combined_scale)
+                    sx2 = int(mx2 * combined_scale)
+                    sy2 = int(my2 * combined_scale)
+                    # Adjust for centering/cropping
+                    dx1 = sx1 - (final_w - DISPLAY_WIDTH) // 2
+                    dy1 = sy1 - (final_h - DISPLAY_HEIGHT) // 2
+                    dx2 = sx2 - (final_w - DISPLAY_WIDTH) // 2
+                    dy2 = sy2 - (final_h - DISPLAY_HEIGHT) // 2
+                    cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (255, 200, 0), 2)
+                    cv2.putText(frame, "Fixed ROI (X)", (dx1, max(30, dy1 - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 200, 0), 2)
+                    last_cam_roi = (240, 180, 400, 300)
+                    if last_raw_z is not None:
+                        cv2.putText(frame, f"RawZ:{last_raw_z:.0f} Clamped:{(last_clamped_z or 0):.0f}",
+                                    (dx1, min(DISPLAY_HEIGHT-10, dy2+30)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 200, 0), 2)
+                except Exception:
+                    pass
             
             # Draw detection circles (lingering visualization)
             if len(recent_detections) > 0:
@@ -657,7 +892,206 @@ with dai.Pipeline(device) as pipeline:
                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Display the frame
+            # Draw auto-calibrate overlay if active
+            if auto_calibrate_mode:
+                try:
+                    pts = mouse_state.get("points", [])
+                    for p in pts:
+                        cv2.circle(frame, p, 10, (0, 255, 0), -1)
+                    if len(pts) == 2:
+                        cv2.line(frame, pts[0], pts[1], (0, 255, 0), 4)
+                    cv2.putText(frame, f"AUTO-CAL 100mm @ {REFERENCE_DISTANCE_MM}mm: Click two points 10cm apart (press G to cancel)",
+                                (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+                    cv2.putText(frame, "Stand steady at reference distance; parallax and distance scaling are disabled",
+                                (40, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                except Exception:
+                    pass
+            # Depth inset with camera-space ROI (toggle with 'd')
+            if show_depth_inset:
+                try:
+                    depth_vis_msg = depth_vis_queue.tryGet()
+                    if depth_vis_msg is not None:
+                        inset = depth_vis_msg.getCvFrame()
+                        if last_cam_roi is not None:
+                            x1, y1, x2, y2 = last_cam_roi
+                            cv2.rectangle(inset, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                            if last_raw_z is not None:
+                                cv2.putText(
+                                    inset,
+                                    f"Raw:{last_raw_z:.0f} Clp:{(last_clamped_z or 0):.0f}",
+                                    (x1, max(15, y1 - 5)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 255, 255),
+                                    1,
+                                )
+                        # Also draw current click points mapped into camera space
+                        try:
+                            pts_disp = mouse_state.get("points", []) if isinstance(mouse_state, dict) else []
+                            if pts_disp:
+                                for (px, py) in pts_disp:
+                                    px = int(px); py = int(py)
+                                    # Map display -> resized content coords
+                                    rx = src_x_start + max(0, min(current_w, px - dst_x_start))
+                                    ry = src_y_start + max(0, min(current_h, py - dst_y_start))
+                                    # Resized -> original camera coords
+                                    sx = int(rx / max(1e-6, combined_scale))
+                                    sy = int(ry / max(1e-6, combined_scale))
+                                    # Undo horizontal flip to camera space
+                                    cam_x = max(0, min(orig_w - 1, orig_w - sx))
+                                    cam_y = max(0, min(orig_h - 1, sy))
+                                    cv2.circle(inset, (cam_x, cam_y), 6, (255, 0, 255), -1)
+                        except Exception:
+                            pass
+                        h, w = inset.shape[:2]
+                        new_w = 480
+                        new_h = int(h * (new_w / w))
+                        inset_resized = cv2.resize(inset, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                        h_clip = min(new_h, frame.shape[0] - 10)
+                        w_clip = min(new_w, frame.shape[1] - 10)
+                        y0 = max(10, frame.shape[0] - h_clip - 10)
+                        x0 = 10
+                        frame[y0:y0 + h_clip, x0:x0 + w_clip] = inset_resized[0:h_clip, 0:w_clip]
+                except Exception:
+                    pass
             cv2.imshow(window_name, frame)
+            # Handle auto-calibration apply when two points are present
+            if auto_calibrate_mode and len(mouse_state.get("points", [])) == 2:
+                try:
+                    (x1, y1), (x2, y2) = mouse_state["points"]
+                    dx = abs(x2 - x1)
+                    dy = abs(y2 - y1)
+                    # Convert 100mm to display pixels on dominant axis
+                    ppmm_x = DISPLAY_WIDTH / DISPLAY_PHYSICAL_WIDTH_MM
+                    ppmm_y = DISPLAY_HEIGHT / DISPLAY_PHYSICAL_HEIGHT_MM
+                    if dx >= dy:
+                        target_px = 100.0 * ppmm_x
+                        measured_px = max(1.0, dx)
+                    else:
+                        target_px = 100.0 * ppmm_y
+                        measured_px = max(1.0, dy)
+
+                    # Also set reference distance from raw depth at segment midpoint (like multi-depth)
+                    try:
+                        if last_depth_raw is not None:
+                            def _map_disp_to_cam(px, py):
+                                rx = src_x_start + max(0, min(current_w, int(px) - dst_x_start))
+                                ry = src_y_start + max(0, min(current_h, int(py) - dst_y_start))
+                                sx = int(rx / max(1e-6, combined_scale))
+                                sy = int(ry / max(1e-6, combined_scale))
+                                cam_x = max(0, min(orig_w - 1, orig_w - sx))
+                                cam_y = max(0, min(orig_h - 1, sy))
+                                return cam_x, cam_y
+                            cpx = (x1 + x2) / 2.0
+                            cpy = (y1 + y2) / 2.0
+                            cx, cy = _map_disp_to_cam(cpx, cpy)
+                            rwin = 5
+                            x1s = max(0, cx - rwin)
+                            x2s = min(last_depth_raw.shape[1] - 1, cx + rwin)
+                            y1s = max(0, cy - rwin)
+                            y2s = min(last_depth_raw.shape[0] - 1, cy + rwin)
+                            win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                            valid = (win > MIN_DISTANCE_MM) & (win < MAX_DISTANCE_MM)
+                            if np.any(valid):
+                                z_click = float(np.median(win[valid]))
+                                REFERENCE_DISTANCE_MM = int(z_click)
+                                print(f"Auto-cal: Reference distance set from raw depth to {REFERENCE_DISTANCE_MM}mm")
+                    except Exception:
+                        pass
+                    # Compute ratio and clamp to avoid runaway scaling if clicks are off
+                    ratio = float(target_px) / float(measured_px)
+                    ratio = max(0.5, min(2.0, ratio))
+                    old = LIFE_SIZE_SCALE_MULTIPLIER
+                    LIFE_SIZE_SCALE_MULTIPLIER = old * ratio
+                    print(f"Auto-calibrate 100mm: measured {measured_px:.1f}px, target {target_px:.1f}px -> multiplier {old:.4f} -> {LIFE_SIZE_SCALE_MULTIPLIER:.4f}")
+                except Exception as e:
+                    print(f"Auto-calibrate error: {e}")
+                finally:
+                    # Reset and restore state
+                    auto_calibrate_mode = False
+                    mouse_state["active"] = False
+                    mouse_state["points"] = []
+                    if auto_saved_state:
+                        freeze_scale = auto_saved_state.get("freeze_scale", freeze_scale)
+                        current_scale = auto_saved_state.get("current_scale", current_scale)
+                        auto_saved_state = None
+                    # Auto-disable manual ROI after one-shot auto-cal completes
+                    manual_roi_active = False
+
+            # Handle multi-depth sample capture when two points are picked
+            if multi_cal_mode and collecting_sample and len(mouse_state.get("points", [])) == 2:
+                try:
+                    (x1, y1), (x2, y2) = mouse_state["points"]
+                    dx = abs(x2 - x1)
+                    dy = abs(y2 - y1)
+                    # Refresh distance reading after ROI change: actively settle and read newest raw z
+                    z_val = None
+                    settle_deadline = time.time() + 0.25  # up to 250ms to allow ROI to take effect
+                    while time.time() < settle_deadline:
+                        # Re-send ROI to ensure takeover during calibration
+                        try:
+                            if 'last_cam_roi' in locals() or 'last_cam_roi' in globals():
+                                if last_cam_roi is not None and len(last_cam_roi) == 4:
+                                    cx1, cy1, cx2, cy2 = last_cam_roi
+                                    measure_distance.roi_input.send(RegionOfInterest(int(cx1), int(cy1), int(cx2), int(cy2)))
+                        except Exception:
+                            pass
+                        m = distance_queue.tryGet()
+                        if m is not None and getattr(m.spatials, "z", 0) > 0:
+                            z_val = float(m.spatials.z)  # use RAW z for calibration
+                    # Final fallback if nothing fresh arrived
+                    if z_val is None:
+                        if distance_msg is not None and getattr(distance_msg.spatials, "z", 0) > 0:
+                            z_val = float(distance_msg.spatials.z)
+                        elif last_valid_distance and last_valid_distance > 0:
+                            z_val = float(last_valid_distance)
+                    # Prefer direct sampling from raw depth at the clicked segment center
+                    if last_depth_raw is not None:
+                        try:
+                            def map_disp_to_cam(px, py):
+                                rx = src_x_start + max(0, min(current_w, int(px) - dst_x_start))
+                                ry = src_y_start + max(0, min(current_h, int(py) - dst_y_start))
+                                sx = int(rx / max(1e-6, combined_scale))
+                                sy = int(ry / max(1e-6, combined_scale))
+                                cam_x = max(0, min(orig_w - 1, orig_w - sx))
+                                cam_y = max(0, min(orig_h - 1, sy))
+                                return cam_x, cam_y
+                            cpx = (x1 + x2) / 2.0
+                            cpy = (y1 + y2) / 2.0
+                            cx, cy = map_disp_to_cam(cpx, cpy)
+                            r = 5
+                            x1s = max(0, cx - r)
+                            x2s = min(last_depth_raw.shape[1] - 1, cx + r)
+                            y1s = max(0, cy - r)
+                            y2s = min(last_depth_raw.shape[0] - 1, cy + r)
+                            win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                            valid = (win > MIN_DISTANCE_MM) & (win < MAX_DISTANCE_MM)
+                            if np.any(valid):
+                                z_click = float(np.median(win[valid]))
+                                z_val = z_click
+                        except Exception:
+                            pass
+                    if not z_val or z_val <= 0:
+                        raise RuntimeError("No valid distance for sample (ensure face or enable fixed ROI with 'x')")
+                    z = z_val
+                    ppmm_x = DISPLAY_WIDTH / DISPLAY_PHYSICAL_WIDTH_MM
+                    ppmm_y = DISPLAY_HEIGHT / DISPLAY_PHYSICAL_HEIGHT_MM
+                    if dx >= dy:
+                        measured_px = max(1.0, dx)
+                        axis = "x"
+                        target_px = 100.0 * ppmm_x
+                    else:
+                        measured_px = max(1.0, dy)
+                        axis = "y"
+                        target_px = 100.0 * ppmm_y
+                    multi_samples.append({"z": z, "measured_px": measured_px, "axis": axis})
+                    print(f"Captured sample: z={z:.0f}mm, measured={measured_px:.1f}px (axis {axis})")
+                except Exception as e:
+                    print(f"Sample capture error: {e}")
+                finally:
+                    collecting_sample = False
+                    mouse_state["active"] = False
+                    mouse_state["points"] = []
         
         # Handle key presses
         key = cv2.waitKey(1)
@@ -687,7 +1121,7 @@ with dai.Pipeline(device) as pipeline:
                     REFERENCE_DISTANCE_MM = int(distance_msg.spatials.z)
                     calibration_step = 1
                     current_scale = 1.0  # Reset scale
-                    print(f"\n✓ Reference distance set to {REFERENCE_DISTANCE_MM}mm")
+                    print(f"\nReference distance set to {REFERENCE_DISTANCE_MM}mm")
                     print("Now adjust image position with arrow keys or WASD")
                     print("Press SPACE when aligned")
                 else:
@@ -696,7 +1130,7 @@ with dai.Pipeline(device) as pipeline:
                 # Finish calibration
                 calibration_mode = False
                 calibration_step = 0
-                print(f"\n✓ CALIBRATION COMPLETE ✓")
+                print("\nCALIBRATION COMPLETE")
                 print(f"Reference Distance: {REFERENCE_DISTANCE_MM}mm")
                 print(f"Image Offset: X={IMAGE_OFFSET_X}, Y={IMAGE_OFFSET_Y}")
                 print("\nYou can fine-tune anytime with:")
@@ -722,16 +1156,26 @@ with dai.Pipeline(device) as pipeline:
             else:
                 print("*** Fixed ROI mode disabled - back to face tracking ***")
         elif key == ord("z"):
-            # Toggle freeze scale mode
+            # Toggle freeze scale mode and reset offsets when toggled
             freeze_scale = not freeze_scale
             if freeze_scale:
                 current_scale = 1.0  # Lock at 1.0
+                # Reset image offsets to zero for clean calibration alignment
+                IMAGE_OFFSET_X = 0
+                IMAGE_OFFSET_Y = 0
+                # Also reset smoothed offsets to avoid lingering shift
+                current_offset_x = 0.0
+                current_offset_y = 0.0
                 print("\n*** SCALE FROZEN AT 1.0 ***")
                 print("No distance-based scaling - image stays constant size")
-                print("Perfect for phone camera calibration")
+                print("Image offsets reset to 0 (X=0, Y=0)")
                 print("Press 'z' again to re-enable scaling")
             else:
                 print("*** Scale unfrozen - distance-based scaling enabled ***")
+        elif key == ord("d"):
+            # Toggle depth inset overlay
+            show_depth_inset = not show_depth_inset
+            print("Depth inset: " + ("ON" if show_depth_inset else "OFF"))
         elif key == ord("f"):
             # Toggle fullscreen
             is_fullscreen = cv2.getWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN)
@@ -767,6 +1211,130 @@ with dai.Pipeline(device) as pipeline:
                 filename = f"mirror_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
+        elif key == ord("n"):
+            # Toggle manual ROI selection for calibration
+            if not manual_roi_select_mode and not auto_calibrate_mode and not multi_cal_mode:
+                manual_roi_select_mode = True
+                manual_roi_points = []
+                mouse_state["active"] = True
+                mouse_state["points"] = []
+                print("Manual ROI select: Click two opposite corners of your target region (then start G or I/O calibration)")
+            elif manual_roi_select_mode:
+                manual_roi_select_mode = False
+                mouse_state["active"] = False
+                manual_roi_points = mouse_state.get("points", manual_roi_points)
+                mouse_state["points"] = []
+                if len(manual_roi_points) == 2:
+                    manual_roi_active = True
+                    print("Manual ROI locked for calibration (auto-disables after calibration)")
+                else:
+                    manual_roi_active = False
+                    print("Manual ROI cancelled")
+
+        elif key == ord("i"):
+            # Toggle multi-depth calibration wizard
+            multi_cal_mode = not multi_cal_mode
+            if multi_cal_mode:
+                freeze_scale = True
+                current_scale = 1.0
+                collecting_sample = False
+                mouse_state["active"] = False
+                mouse_state["points"] = []
+                multi_samples = []
+                print("Multi-depth calibration: ON. Press O to capture a sample, ENTER to solve, BACKSPACE to delete last, I to exit.")
+            else:
+                freeze_scale = False
+                collecting_sample = False
+                mouse_state["active"] = False
+                mouse_state["points"] = []
+                print("Multi-depth calibration: OFF")
+        elif key == ord("o"):
+            # Begin capture of one sample (two clicks)
+            if multi_cal_mode and not collecting_sample:
+                collecting_sample = True
+                mouse_state["active"] = True
+                mouse_state["points"] = []
+                print("Click two content points 100mm apart to capture sample")
+        elif key == 8:  # BACKSPACE
+            if multi_cal_mode and multi_samples:
+                removed = multi_samples.pop()
+                print(f"Removed sample: z={removed['z']:.0f}mm, measured={removed['measured_px']:.1f}px")
+        elif key == 13:  # ENTER
+            if multi_cal_mode and multi_samples:
+                try:
+                    import numpy as _np
+                    A = []
+                    b = []
+                    ppmm_x = DISPLAY_WIDTH / DISPLAY_PHYSICAL_WIDTH_MM
+                    ppmm_y = DISPLAY_HEIGHT / DISPLAY_PHYSICAL_HEIGHT_MM
+                    for s in multi_samples:
+                        z = float(s["z"])
+                        d = (REFERENCE_DISTANCE_MM / z) - 1.0
+                        target_px = 100.0 * (ppmm_x if s["axis"] == "x" else ppmm_y)
+                        ratio = float(target_px) / float(s["measured_px"])  # desired scale at z
+                        A.append([d, d * d])
+                        b.append([ratio - 1.0])
+                    A = _np.array(A, dtype=_np.float64)
+                    b = _np.array(b, dtype=_np.float64)
+                    sol, *_ = _np.linalg.lstsq(A, b, rcond=None)
+                    k = float(sol[0][0])
+                    q = float(sol[1][0])
+                    globals()["SCALE_MODEL_K"] = k
+                    globals()["SCALE_MODEL_Q"] = q
+                    print(f"Fitted scale model: k={k:.4f}, q={q:.4f} (samples={len(multi_samples)})")
+                    # Save to calibration.json
+                    try:
+                        cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                        cal = {}
+                        if os.path.exists(cal_path):
+                            with open(cal_path, "r", encoding="utf-8") as f:
+                                cal = json.load(f) or {}
+                        cal["scale_model_k"] = k
+                        cal["scale_model_q"] = q
+                        with open(cal_path, "w", encoding="utf-8") as f:
+                            json.dump(cal, f, indent=2)
+                        print(f"Saved scale model to {cal_path}")
+                    except Exception as e:
+                        print(f"Save error: {e}")
+                    # Exit wizard
+                    multi_cal_mode = False
+                    freeze_scale = False
+                    collecting_sample = False
+                    mouse_state["active"] = False
+                    mouse_state["points"] = []
+                except Exception as e:
+                    print(f"Solve error: {e}")
+        elif key == ord("g"):
+            # Toggle Auto-calibrate 100mm mode
+            auto_calibrate_mode = not auto_calibrate_mode
+            if auto_calibrate_mode:
+                # Save and then freeze scale, disable parallax and distance scaling for a clean measurement
+                auto_saved_state = {
+                    "freeze_scale": freeze_scale,
+                    "current_scale": current_scale,
+                    "distance_scale_weight_live": distance_scale_weight_live,
+                    "parallax_weight_x_live": parallax_weight_x_live,
+                    "parallax_weight_y_live": parallax_weight_y_live,
+                }
+                freeze_scale = True
+                current_scale = 1.0
+                distance_scale_weight_live = 0.0
+                parallax_weight_x_live = 0.0
+                parallax_weight_y_live = 0.0
+                mouse_state["active"] = True
+                mouse_state["points"] = []
+                print("Auto-calibrate started: stand at reference distance and Click two content points 100mm apart")
+            else:
+                mouse_state["active"] = False
+                mouse_state["points"] = []
+                if auto_saved_state:
+                    freeze_scale = auto_saved_state.get("freeze_scale", freeze_scale)
+                    current_scale = auto_saved_state.get("current_scale", current_scale)
+                    distance_scale_weight_live = auto_saved_state.get("distance_scale_weight_live", distance_scale_weight_live)
+                    parallax_weight_x_live = auto_saved_state.get("parallax_weight_x_live", parallax_weight_x_live)
+                    parallax_weight_y_live = auto_saved_state.get("parallax_weight_y_live", parallax_weight_y_live)
+                    auto_saved_state = None
+                print("Auto-calibrate cancelled")
         
         # Real-time calibration controls
         # Arrow keys (codes may vary by system)
@@ -819,6 +1387,8 @@ with dai.Pipeline(device) as pipeline:
             print("R: Reset position offsets")
             print("F: Toggle fullscreen")
             print("M: Move window to next monitor")
+            print("I: Multi-depth calibration (O capture, ENTER solve, BACKSPACE undo)")
+            print("G: Auto-calibrate 100mm (click two points)")
             print("P: Save screenshot")
             print("Q: Quit (and show final values)")
             print("H: Show this help")
@@ -830,3 +1400,25 @@ with dai.Pipeline(device) as pipeline:
     print(f"  IMAGE_OFFSET_X = {IMAGE_OFFSET_X}")
     print(f"  IMAGE_OFFSET_Y = {IMAGE_OFFSET_Y}")
     print(f"  REFERENCE_DISTANCE_MM = {REFERENCE_DISTANCE_MM}")
+
+
+
+    # Throttled console prints for fixed ROI depth sanity check
+    last_fixed_roi_print_z = None
+    last_fixed_roi_print_time = 0.0
+    last_raw_z = None
+    last_clamped_z = None
+
+
+
+
+
+
+
+
+
+
+
+
+
+

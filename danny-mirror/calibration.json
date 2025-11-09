@@ -1,0 +1,15 @@
+{
+  "REFERENCE_DISTANCE_MM": 1800,
+  "DISPLAY_PHYSICAL_WIDTH_MM": 620,
+  "DISPLAY_PHYSICAL_HEIGHT_MM": 1100,
+  "CAMERA_OFFSET_Y_MM": 0,
+  "CAMERA_OFFSET_X_MM": 0,
+  "LIFE_SIZE_SCALE_MULTIPLIER": 1.55,
+  "IMAGE_OFFSET_X": 0,
+  "IMAGE_OFFSET_Y": 0,
+  "distance_scale_weight": 0.0,
+  "parallax_weight_x": 0.0,
+  "parallax_weight_y": 0.0,
+  "scale_model_k": -3.1141314180209765,
+  "scale_model_q": 2.8440672775457316
+}
