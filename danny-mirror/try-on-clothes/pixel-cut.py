@@ -8,8 +8,10 @@ PIXELCUT_API_KEY = os.environ.get("PIXELCUT_API_KEY", "sk_d9c026c715664ae4955fe0
 
 # 2. Local image paths
 BASE_DIR = Path(__file__).resolve().parent
-PERSON_IMAGE_PATH = BASE_DIR / "calibration_images" / "3.png"  # your photo
+PERSON_IMAGE_PATH = BASE_DIR / "calibration_images" / "3_square.png"  # your photo
 GARMENT_IMAGE_PATH = BASE_DIR / "pixel-cut-input" / "puffer_jacket.png"  # photo of the clothes
+
+# oak-examples\danny-mirror\try-on-clothes\jackie_baseline_image_with_borders_and_markers.png
 
 API_URL = "https://api.developer.pixelcut.ai/v1/try-on"
 
@@ -54,7 +56,7 @@ def main():
     if result_url:
         img_resp = requests.get(result_url, timeout=60)
         if img_resp.status_code == 200:
-            out_path = "tryon_result.jpg"
+            out_path = "tryon_result_with_markers.jpg"
             with open(out_path, "wb") as f:
                 f.write(img_resp.content)
             print(f"Saved result to {out_path}")

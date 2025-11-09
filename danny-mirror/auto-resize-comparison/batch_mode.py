@@ -206,5 +206,5 @@ if __name__ == "__main__":
 
     orig_path = sys.argv[1]
     edit_path = sys.argv[2]
-    out_dir = sys.argv[3] if len(sys.argv) > 3 else "outputs_36"
+    out_dir = sys.argv[3] if len(sys.argv) > 3 else "outputs_36_v2"
     main(orig_path, edit_path, out_dir)
