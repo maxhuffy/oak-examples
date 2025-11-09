@@ -73,18 +73,32 @@ LIFE_SIZE_SCALE_MULTIPLIER = 1.55
 
 # Camera/Display Alignment Configuration
 # MEASURED: Camera is ~7cm above display top + ~3cm tape = ~100mm total
-CAMERA_OFFSET_Y_MM = 60     # Camera is 100mm above top of display
-CAMERA_OFFSET_X_MM = 0       # Centered horizontally
+CAMERA_OFFSET_Y_MM = 0     # Camera position relative to EYE LINE (mm). +Y = camera above eyes
+CAMERA_OFFSET_X_MM = 0     # Camera position relative to EYE LINE (mm). +X = camera to your right
+
+# Optional: Camera mount relative to DISPLAY CENTER (mm). +Y = camera above display center, +X = camera right of center
+# If you measure these and set them (or provide in calibration.json), the code will convert to pixels
+# and add as a static image offset automatically, so you don't have to hand-tune IMAGE_OFFSET_*.
+DISPLAY_CAMERA_OFFSET_X_MM = 0
+DISPLAY_CAMERA_OFFSET_Y_MM = 0
 
 # Calibration factor: Measured from ruler in image
 # 22 inches (558.8mm) vertical ruler spans roughly 1700 pixels
 # Actual pixels/mm ≈ 3.04 (vs theoretical 3.49 from 3840/1100)
 PIXELS_PER_MM = 3.04         
 
+# Depth clipping / viewer band configuration
+DEPTH_CLIP_MAX_MM = 3000  # legacy single-threshold clip (unused in viewer band mode)
+VIEWER_BAND_TOL_MM = 200  # when enabled, keep only pixels within +/- this tolerance of viewer depth
+
+ 
+
 # Optional calibrated distance scaling model: s(z) = 1 + k*(r-1) + q*(r-1)^2
 # where r = REFERENCE_DISTANCE_MM / z. Loaded from calibration.json if present.
 SCALE_MODEL_K = None
 SCALE_MODEL_Q = None
+# Default persisted tuning values (can be overridden by CLI)
+PARALLAX_DISTANCE_EXP_DEFAULT = 1.0
 try:
     _cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
     if os.path.exists(_cal_path):
@@ -95,12 +109,37 @@ try:
                 SCALE_MODEL_K = float(_cal["scale_model_k"])  # may raise
             if "scale_model_q" in _cal:
                 SCALE_MODEL_Q = float(_cal["scale_model_q"])  # may raise
+            # Load persisted offsets if present
+            if "CAMERA_OFFSET_Y_MM" in _cal:
+                CAMERA_OFFSET_Y_MM = int(_cal["CAMERA_OFFSET_Y_MM"])  # type: ignore[name-defined]
+            if "CAMERA_OFFSET_X_MM" in _cal:
+                CAMERA_OFFSET_X_MM = int(_cal["CAMERA_OFFSET_X_MM"])  # type: ignore[name-defined]
+            if "IMAGE_OFFSET_X" in _cal:
+                IMAGE_OFFSET_X = int(_cal["IMAGE_OFFSET_X"])  # type: ignore[name-defined]
+            if "IMAGE_OFFSET_Y" in _cal:
+                IMAGE_OFFSET_Y = int(_cal["IMAGE_OFFSET_Y"])  # type: ignore[name-defined]
+            # Load optional display-center-to-camera offsets (mm)
+            if "DISPLAY_CAMERA_OFFSET_X_MM" in _cal:
+                DISPLAY_CAMERA_OFFSET_X_MM = int(_cal["DISPLAY_CAMERA_OFFSET_X_MM"])  # type: ignore[name-defined]
+            if "DISPLAY_CAMERA_OFFSET_Y_MM" in _cal:
+                DISPLAY_CAMERA_OFFSET_Y_MM = int(_cal["DISPLAY_CAMERA_OFFSET_Y_MM"])  # type: ignore[name-defined]
+            # Load parallax exponent default if present
+            if "parallax_distance_scale" in _cal:
+                PARALLAX_DISTANCE_EXP_DEFAULT = float(_cal["parallax_distance_scale"])  # type: ignore[assignment]
+except Exception:
+    pass
+
+# Log current display-camera offsets so they’re visible at startup
+try:
+    print(
+        f"DisplayCamera offset (mm): X={DISPLAY_CAMERA_OFFSET_X_MM}, Y={DISPLAY_CAMERA_OFFSET_Y_MM}"
+    )
 except Exception:
     pass
 
 # Fine-tune offset (in pixels) - use arrow keys during calibration to adjust
-IMAGE_OFFSET_X = -290           # Additional shift left (-) or right (+)
-IMAGE_OFFSET_Y = -1780          # Shift image up (-) or down (+)  - POSITIVE moves display DOWN
+IMAGE_OFFSET_X = 0           # Additional shift left (-) or right (+)
+IMAGE_OFFSET_Y = 0          # Shift image up (-) or down (+)  - POSITIVE moves display DOWN
 
 with dai.Pipeline(device) as pipeline:
     print("Creating Magic Mirror pipeline...")
@@ -323,9 +362,9 @@ with dai.Pipeline(device) as pipeline:
     except Exception:
         parallax_weight_y_live = 0.0
     try:
-        parallax_distance_exp_live = float(getattr(args, "parallax_distance_scale", 1.0))
+        parallax_distance_exp_live = float(getattr(args, "parallax_distance_scale", PARALLAX_DISTANCE_EXP_DEFAULT))
     except Exception:
-        parallax_distance_exp_live = 1.0
+        parallax_distance_exp_live = PARALLAX_DISTANCE_EXP_DEFAULT
     use_world_parallax = True
     show_ruler = False
     show_content_ruler = False
@@ -358,6 +397,15 @@ with dai.Pipeline(device) as pipeline:
     multi_cal_mode = False
     multi_samples = []  # list of dicts: {"z": z_mm, "measured_px": px, "axis": "x"|"y"}
     collecting_sample = False
+    # Persistent depth readout (set by 'y' hotkey)
+    stored_depth_display_mm = None
+    last_face_center_cam = None  # (x,y) in camera coords (pre-flip)
+    last_face_conf_seen = 0.0
+    last_face_conf_time = 0.0
+    # Depth clip state (B toggle)
+    depth_clip_enabled = False
+    viewer_band_target_z = None
+    viewer_band_last_time = 0.0
     
     print("\n=== MAGIC MIRROR CALIBRATION ===")
     print("Press 'C' to enter calibration mode")
@@ -380,12 +428,15 @@ with dai.Pipeline(device) as pipeline:
         distance_msg = distance_queue.tryGet()
         
         # Capture detections for visualization (before any transforms)
+        last_face_conf_max = 0.0
         if det_msg is not None:
             # Store detection info for lingering visualization
             for detection in det_msg.detections:
                 try:
                     # Filter by confidence - only keep high-confidence detections (>75%)
                     confidence = detection.confidence if hasattr(detection, 'confidence') else 1.0
+                    if confidence > last_face_conf_max:
+                        last_face_conf_max = float(confidence)
                     if confidence < 0.75:
                         continue  # Skip low-confidence detections (false positives)
                     
@@ -412,6 +463,15 @@ with dai.Pipeline(device) as pipeline:
                         center_x = (x1 + x2) / 2
                         center_y = (y1 + y2) / 2
                         radius = max(width, height) / 2 + padding
+                        # Track last face center in camera/depth coords for direct depth sampling
+                        last_face_center_cam = (int(round(center_x)), int(round(center_y)))
+                        # Persist last confident face time (>=0.8) for Y hotkey gating
+                        try:
+                            if float(confidence) >= 0.8:
+                                last_face_conf_seen = float(confidence)
+                                last_face_conf_time = time.time()
+                        except Exception:
+                            pass
                         
                         recent_detections.append({
                             'center_x': center_x,
@@ -449,6 +509,8 @@ with dai.Pipeline(device) as pipeline:
             if distance_msg is not None:
                 z_mm = distance_msg.spatials.z
                 z_raw_for_print = z_mm
+                # Track centroid for mapping seed (in depth/camera space 640x480, pre-flip)
+                
                 
                 # Only use valid depth readings (not NaN or 0)
                 if z_mm > 0 and not np.isnan(z_mm):
@@ -622,24 +684,30 @@ with dai.Pipeline(device) as pipeline:
             # - At 250mm (closer): offset doubles (parallax effect stronger)
             # - At 1000mm (farther): offset halves (parallax effect weaker)
             
-            target_offset_x = float(IMAGE_OFFSET_X)
-            target_offset_y = float(IMAGE_OFFSET_Y)
+            # Start from static image offset plus static display-center-to-camera offset converted to pixels
+            static_disp_x = -float(DISPLAY_CAMERA_OFFSET_X_MM) * float(PIXELS_PER_MM)
+            static_disp_y = -float(DISPLAY_CAMERA_OFFSET_Y_MM) * float(PIXELS_PER_MM)
+            target_offset_x = float(IMAGE_OFFSET_X) + static_disp_x
+            target_offset_y = float(IMAGE_OFFSET_Y) + static_disp_y
             
             if last_valid_distance > 0:
-                # SIMPLIFIED: Use constant offset regardless of distance
-                # In a real mirror, the camera offset creates a fixed parallax that doesn't 
-                # change much with distance (unlike the scaling which does change)
-                
-                # Camera above your eye line means image should shift UP (negative Y in OpenCV)
-                y_offset_pixels = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
-                x_offset_pixels = -CAMERA_OFFSET_X_MM * PIXELS_PER_MM
-                # If scale is frozen (Z), suppress camera baseline offsets so total offset can be zeroed
+                # Dynamic parallax from calibrated camera-vs-eye baseline
+                base_y_px = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
+                base_x_px = -CAMERA_OFFSET_X_MM * PIXELS_PER_MM
                 if freeze_scale:
-                    y_offset_pixels = 0
-                    x_offset_pixels = 0
-                
-                target_offset_x += x_offset_pixels
-                target_offset_y += y_offset_pixels
+                    parallax_scale = 0.0
+                else:
+                    try:
+                        r_parallax = float(REFERENCE_DISTANCE_MM) / max(1e-6, float(last_valid_distance))
+                    except Exception:
+                        r_parallax = 1.0
+                    try:
+                        parallax_scale = float(r_parallax) ** float(parallax_distance_exp_live)
+                    except Exception:
+                        parallax_scale = r_parallax
+                    parallax_scale = max(0.0, min(3.0, parallax_scale))
+                target_offset_x += base_x_px * parallax_scale
+                target_offset_y += base_y_px * parallax_scale
             
             # Clamp target offsets to prevent extreme values
             MAX_OFFSET = DISPLAY_HEIGHT * 2
@@ -701,6 +769,128 @@ with dai.Pipeline(device) as pipeline:
                 output_frame[dst_y_start:dst_y_end, dst_x_start:dst_x_end] = frame[src_y_start:src_y_end, src_x_start:src_x_end]
             
             frame = output_frame
+
+            # Viewer band mask: when enabled, keep only the viewer's connected depth region within +/- VIEWER_BAND_TOL_MM
+            if depth_clip_enabled and last_depth_raw is not None:
+                try:
+                    now_ts = time.time()
+                    # Update viewer target depth from recent confident face if available
+                    recent_face_ok = False
+                    try:
+                        recent_face_ok = (last_face_conf_seen >= 0.8) and ((now_ts - float(last_face_conf_time)) <= 1.5)
+                    except Exception:
+                        recent_face_ok = False
+                    if recent_face_ok and (last_face_center_cam is not None):
+                        cx_cam, cy_cam = last_face_center_cam
+                        dh, dw = last_depth_raw.shape[:2]
+                        try:
+                            scale_x = dw / float(orig_w)
+                            scale_y = dh / float(orig_h)
+                        except Exception:
+                            scale_x = 1.0
+                            scale_y = 1.0
+                        sx = int(round(cx_cam * scale_x))
+                        sy = int(round(cy_cam * scale_y))
+                        rwin = 6
+                        x1s = max(0, sx - rwin)
+                        x2s = min(dw - 1, sx + rwin)
+                        y1s = max(0, sy - rwin)
+                        y2s = min(dh - 1, sy + rwin)
+                        win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                        valid_win = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                        if np.any(valid_win):
+                            viewer_band_target_z = float(np.median(win[valid_win]))
+                            viewer_band_last_time = now_ts
+                    # Fallback: if no recent confident face, keep last target; if none yet, try last_clamped_z
+                    if (viewer_band_target_z is None or not np.isfinite(viewer_band_target_z)) and (last_clamped_z is not None and last_clamped_z > 0):
+                        viewer_band_target_z = float(last_clamped_z)
+                        viewer_band_last_time = now_ts
+
+                    if viewer_band_target_z is not None and np.isfinite(viewer_band_target_z):
+                        depth_img = last_depth_raw.astype(np.float32)
+                        depth_mir = cv2.flip(depth_img, 1)
+                        depth_resized = cv2.resize(depth_mir, (final_w, final_h), interpolation=cv2.INTER_NEAREST)
+                        depth_crop = depth_resized[src_y_start:src_y_end, src_x_start:src_x_end]
+                        if depth_crop.size > 0:
+                            valid = (depth_crop >= MIN_DISTANCE_MM) & (depth_crop <= MAX_DISTANCE_MM)
+                            in_band = np.abs(depth_crop - float(viewer_band_target_z)) <= float(VIEWER_BAND_TOL_MM)
+                            band_mask = (valid & in_band)
+                            if band_mask.any():
+                                band_u8 = (band_mask.astype(np.uint8) * 255)
+                                # Clean the band to connect body parts
+                                k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                                band_u8 = cv2.morphologyEx(band_u8, cv2.MORPH_CLOSE, k_close, iterations=1)
+                                # Add a bit of vertical dilation to connect torso/legs
+                                k_vert = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 17))
+                                band_u8 = cv2.dilate(band_u8, k_vert, iterations=1)
+                                # Choose connected component that overlaps a vertical corridor beneath face center
+                                num_labels, labels = cv2.connectedComponents(band_u8)
+                                chosen = None
+                                best_score = -1
+                                try:
+                                    if last_face_center_cam is not None:
+                                        cx_cam, cy_cam = last_face_center_cam
+                                        # Map face center to cropped-resized coords
+                                        fx_mir = (orig_w - 1) - int(cx_cam)
+                                        rx = int(round(fx_mir * combined_scale))
+                                        ry = int(round(int(cy_cam) * combined_scale))
+                                        sx = rx - src_x_start
+                                        sy = ry - src_y_start
+                                        # Build a corridor mask around face X extending downward
+                                        corridor = np.zeros_like(band_u8, dtype=np.uint8)
+                                        half_w = max(40, int(0.12 * corridor.shape[1]))
+                                        x1c = max(0, sx - half_w)
+                                        x2c = min(corridor.shape[1] - 1, sx + half_w)
+                                        y1c = max(0, sy - int(0.5 * half_w))
+                                        y2c = corridor.shape[0] - 1
+                                        corridor[y1c:y2c+1, x1c:x2c+1] = 255
+                                        for lbl in range(1, num_labels):
+                                            comp = (labels == lbl)
+                                            # Score by overlap with corridor and area (favor larger overlap, then area)
+                                            overlap = int(np.count_nonzero(comp & (corridor > 0)))
+                                            if overlap <= 0:
+                                                continue
+                                            area = int(np.count_nonzero(comp))
+                                            score = overlap * 10 + area
+                                            if score > best_score:
+                                                best_score = score
+                                                chosen = comp
+                                except Exception:
+                                    chosen = None
+                                # Fallback: choose largest component if no seeded overlap
+                                if chosen is None and num_labels > 1:
+                                    max_area = -1
+                                    for lbl in range(1, num_labels):
+                                        comp = (labels == lbl)
+                                        area = int(np.count_nonzero(comp))
+                                        if area > max_area:
+                                            max_area = area
+                                            chosen = comp
+                                if chosen is not None:
+                                    roi = frame[dst_y_start:dst_y_end, dst_x_start:dst_x_end]
+                                    if roi.shape[:2] == chosen.shape:
+                                        inv = ~chosen
+                                        roi[inv] = 0
+                except Exception:
+                    pass
+
+            # (Depth-based pink highlighting removed per request)
+
+            # Draw persistent depth readout if set
+            try:
+                if stored_depth_display_mm is not None:
+                    text = f"{int(stored_depth_display_mm)} mm"
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    scale = 3.0
+                    thickness = 8
+                    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+                    x = max(20, (DISPLAY_WIDTH - tw) // 2)
+                    y = 200
+                    # Background rectangle for readability
+                    cv2.rectangle(frame, (x - 20, y - th - 20), (x + tw + 20, y + 20), (0, 0, 0), -1)
+                    cv2.putText(frame, text, (x, y), font, scale, (0, 255, 255), thickness, cv2.LINE_AA)
+            except Exception:
+                pass
 
             # Manual ROI override during calibration: map display rectangle to camera ROI
             if manual_roi_active and (auto_calibrate_mode or multi_cal_mode) and len(manual_roi_points) == 2:
@@ -1183,6 +1373,56 @@ with dai.Pipeline(device) as pipeline:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
             else:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        elif key == ord("b"):
+            # Toggle viewer band masking (keep only +/- VIEWER_BAND_TOL_MM around viewer depth)
+            depth_clip_enabled = not depth_clip_enabled
+            if not depth_clip_enabled:
+                viewer_band_target_z = None
+            print(f"Viewer band mask (±{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")
+        elif key == ord("["):
+            # Nudge parallax distance exponent down and persist
+            try:
+                parallax_distance_exp_live = float(parallax_distance_exp_live) - 0.05
+            except Exception:
+                parallax_distance_exp_live = 1.0
+            # Clamp to reasonable range
+            if parallax_distance_exp_live < 0.0:
+                parallax_distance_exp_live = 0.0
+            print(f"parallax_distance_scale set to {parallax_distance_exp_live:.3f}")
+            try:
+                cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                cal = {}
+                if os.path.exists(cal_path):
+                    with open(cal_path, "r", encoding="utf-8") as f:
+                        cal = json.load(f) or {}
+                cal["parallax_distance_scale"] = float(parallax_distance_exp_live)
+                with open(cal_path, "w", encoding="utf-8") as f:
+                    json.dump(cal, f, indent=2)
+                print("Saved parallax_distance_scale to calibration.json")
+            except Exception as e:
+                print(f"Save error: {e}")
+        elif key == ord("]"):
+            # Nudge parallax distance exponent up and persist
+            try:
+                parallax_distance_exp_live = float(parallax_distance_exp_live) + 0.05
+            except Exception:
+                parallax_distance_exp_live = 1.0
+            # Clamp to reasonable range
+            if parallax_distance_exp_live > 3.0:
+                parallax_distance_exp_live = 3.0
+            print(f"parallax_distance_scale set to {parallax_distance_exp_live:.3f}")
+            try:
+                cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                cal = {}
+                if os.path.exists(cal_path):
+                    with open(cal_path, "r", encoding="utf-8") as f:
+                        cal = json.load(f) or {}
+                cal["parallax_distance_scale"] = float(parallax_distance_exp_live)
+                with open(cal_path, "w", encoding="utf-8") as f:
+                    json.dump(cal, f, indent=2)
+                print("Saved parallax_distance_scale to calibration.json")
+            except Exception as e:
+                print(f"Save error: {e}")
         elif key == ord("m"):
             # Move window to the next monitor
             try:
@@ -1211,6 +1451,114 @@ with dai.Pipeline(device) as pipeline:
                 filename = f"mirror_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
+        elif key == ord("y"):
+            # Capture and persist current viewer depth using raw depth at face center
+            try:
+                # Accept a recently-seen confident face (within 2 seconds)
+                recent_face_ok = False
+                try:
+                    recent_face_ok = (last_face_conf_seen >= 0.8) and ((time.time() - float(last_face_conf_time)) <= 2.0)
+                except Exception:
+                    recent_face_ok = False
+                if recent_face_ok and last_face_center_cam is not None and last_depth_raw is not None:
+                    cx_cam, cy_cam = last_face_center_cam
+                    dh, dw = last_depth_raw.shape[:2]
+                    # Map camera coords (orig_w x orig_h) to depth size in case of mismatch
+                    try:
+                        scale_x = dw / float(orig_w)
+                        scale_y = dh / float(orig_h)
+                    except Exception:
+                        scale_x = 1.0
+                        scale_y = 1.0
+                    sx = int(round(cx_cam * scale_x))
+                    sy = int(round(cy_cam * scale_y))
+                    rwin = 6
+                    x1s = max(0, sx - rwin)
+                    x2s = min(dw - 1, sx + rwin)
+                    y1s = max(0, sy - rwin)
+                    y2s = min(dh - 1, sy + rwin)
+                    win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                    valid = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                    if np.any(valid):
+                        z_med = float(np.median(win[valid]))
+                        stored_depth_display_mm = int(round(z_med))
+                        print(f"Depth captured: {stored_depth_display_mm} mm (face conf {last_face_conf_seen:.2f})")
+                    else:
+                        print("Cannot capture depth: no valid depth at face position.")
+                else:
+                    print("Cannot capture depth: no recent confident face (>=0.80) or missing depth/position.")
+            except Exception as e:
+                print(f"Capture error: {e}")
+        elif key == ord("e"):
+            # Eye-offset auto-calibration: derive camera offset from eye/face spatials
+            try:
+                prev_freeze = freeze_scale
+                freeze_scale = True
+                print("\nEye-offset calibration: Hold steady and look at your reflection...")
+                if getattr(args, "eye_roi", False):
+                    print("Using eye ROI for calibration")
+                else:
+                    print("Using face ROI (enable --eye_roi for tighter calibration)")
+                xs = []
+                ys = []
+                zs = []
+                start = time.time()
+                duration_s = 1.2
+                while time.time() - start < duration_s:
+                    msg = distance_queue.tryGet()
+                    if msg is not None:
+                        try:
+                            _x = float(msg.spatials.x)
+                            _y = float(msg.spatials.y)
+                            _z = float(msg.spatials.z)
+                            if _z > 0 and not np.isnan(_z):
+                                xs.append(_x)
+                                ys.append(_y)
+                                zs.append(_z)
+                        except Exception:
+                            pass
+                    time.sleep(0.005)
+                if len(xs) >= 5:
+                    cx = float(np.median(xs))
+                    cy = float(np.median(ys))
+                    cz = float(np.median(zs)) if zs else float('nan')
+                    CAMERA_OFFSET_X_MM = int(round(-cx))
+                    CAMERA_OFFSET_Y_MM = int(round(-cy))
+                    current_offset_x = 0.0
+                    current_offset_y = 0.0
+                    # Persist to calibration.json (merge/update)
+                    try:
+                        cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                        cal = {}
+                        if os.path.exists(cal_path):
+                            with open(cal_path, "r", encoding="utf-8") as f:
+                                cal = json.load(f) or {}
+                        cal["CAMERA_OFFSET_X_MM"] = int(CAMERA_OFFSET_X_MM)
+                        cal["CAMERA_OFFSET_Y_MM"] = int(CAMERA_OFFSET_Y_MM)
+                        cal["IMAGE_OFFSET_X"] = int(IMAGE_OFFSET_X)
+                        cal["IMAGE_OFFSET_Y"] = int(IMAGE_OFFSET_Y)
+                        cal["parallax_distance_scale"] = float(parallax_distance_exp_live)
+                        with open(cal_path, "w", encoding="utf-8") as f:
+                            json.dump(cal, f, indent=2)
+                        print(f"Saved camera offsets to {cal_path}")
+                    except Exception as se:
+                        print(f"Save error: {se}")
+                    x_px = -CAMERA_OFFSET_X_MM * PIXELS_PER_MM
+                    y_px = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
+                    try:
+                        print(
+                            f"Calibrated CAMERA_OFFSET: X={CAMERA_OFFSET_X_MM}mm, Y={CAMERA_OFFSET_Y_MM}mm (px shift ~ X={x_px:.0f}, Y={y_px:.0f}); Z≈{cz:.0f}mm"
+                        )
+                    except Exception:
+                        print(
+                            f"Calibrated CAMERA_OFFSET: X={CAMERA_OFFSET_X_MM}mm, Y={CAMERA_OFFSET_Y_MM}mm (px shift ~ X={x_px}, Y={y_px})"
+                        )
+                else:
+                    print("Eye-offset calibration failed: not enough samples. Ensure face/eyes are detected.")
+            except Exception as e:
+                print(f"Eye-offset calibration error: {e}")
+            finally:
+                freeze_scale = prev_freeze if 'prev_freeze' in locals() else freeze_scale
         elif key == ord("n"):
             # Toggle manual ROI selection for calibration
             if not manual_roi_select_mode and not auto_calibrate_mode and not multi_cal_mode:
