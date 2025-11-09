@@ -117,6 +117,7 @@ def iterative_expand_red(
 	max_iterations: int,
 	decay: float,
 	min_margin: float,
+	frontier_percentile: float,
 ) -> np.ndarray:
 	"""Grow the red mask into blue pixels when the diff map strongly differs."""
 
@@ -126,7 +127,7 @@ def iterative_expand_red(
 	blue_values = diff_map[blue_mask]
 	red_values = diff_map[red_mask]
 
-	noise_floor = np.percentile(blue_values, 90) if blue_values.size else 0.0
+	noise_floor = np.percentile(blue_values, 85) if blue_values.size else 0.0
 	signal_floor = (
 		np.percentile(red_values, 30) if red_values.size else np.percentile(diff_map[opaque], 75)
 	)
@@ -144,7 +145,16 @@ def iterative_expand_red(
 		candidate_indices = np.where(frontier)
 		candidate_values = diff_map[candidate_indices]
 
-		accept = candidate_values >= threshold
+		candidate_threshold = threshold
+		if candidate_values.size:
+			percentile_cutoff = np.percentile(
+				candidate_values, np.clip(frontier_percentile, 0.0, 100.0)
+			)
+			candidate_threshold = min(
+				candidate_threshold, max(min_threshold, percentile_cutoff)
+			)
+
+		accept = candidate_values >= candidate_threshold
 		accepted_pixels = tuple(idx[accept] for idx in candidate_indices)
 
 		if not accept.any():
@@ -195,26 +205,35 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--output",
 		type=Path,
-		default=Path("blue_red_mask_red_expanded.png"),
+		default=Path("blue_red_mask_red_expanded_v4_aggressive.png"),
 		help="Filename for the expanded mask",
 	)
 	parser.add_argument(
 		"--max-iterations",
 		type=int,
-		default=30,
+		default=600,
 		help="Maximum number of expansion iterations",
 	)
 	parser.add_argument(
 		"--decay",
 		type=float,
-		default=0.9,
+		default=0.4,
 		help="Multiplier applied to the threshold after each successful iteration",
 	)
 	parser.add_argument(
 		"--min-margin",
 		type=float,
-		default=5.0,
+		default=0.75,
 		help="Minimum difference above the noise floor to accept new red pixels",
+	)
+	parser.add_argument(
+		"--frontier-percentile",
+		type=float,
+		default=40.0,
+		help=(
+			"Percentile of current frontier differences to guarantee acceptance;"
+			" helps expansion continue when thresholds plateau"
+		),
 	)
 	return parser.parse_args()
 
@@ -245,6 +264,7 @@ def main() -> None:
 		max_iterations=args.max_iterations,
 		decay=args.decay,
 		min_margin=args.min_margin,
+		frontier_percentile=args.frontier_percentile,
 	)
 
 	output_img = compose_output(expanded_red, updated_blue)
