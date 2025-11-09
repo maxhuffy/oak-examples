@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Magic Mirror Effect - Scales the video feed based on user distance to create
 a realistic mirror reflection effect.
@@ -10,7 +10,7 @@ IMAGE PROCESSING FLOW:
 1. Camera captures: 640x480 (landscape - optimal for YuNet face detection)
 2. Flip horizontal: mirror effect
 3. Scale by distance: closer = larger (inversely proportional)
-4. Scale to display: 640x480 → varies (fits portrait display 2160x3840)
+4. Scale to display: 640x480 â†’ varies (fits portrait display 2160x3840)
 5. Apply offsets: align with real reflection
 6. Crop to display: 2160x3840 (final output)
 """
@@ -68,7 +68,7 @@ DISPLAY_PHYSICAL_HEIGHT_MM = 1100   # Physical height of display in millimeters
 
 # Scale multiplier for 1:1 life-size at reference distance
 # CALIBRATED FROM IMAGE: At 1500mm with scale frozen at 1.0, image filled ~50% of screen
-# This means we need roughly 2× larger → setting to 2.2 for safety margin
+# This means we need roughly 2Ã— larger â†’ setting to 2.2 for safety margin
 LIFE_SIZE_SCALE_MULTIPLIER = 1.55
 
 # Camera/Display Alignment Configuration
@@ -84,12 +84,16 @@ DISPLAY_CAMERA_OFFSET_Y_MM = 0
 
 # Calibration factor: Measured from ruler in image
 # 22 inches (558.8mm) vertical ruler spans roughly 1700 pixels
-# Actual pixels/mm ≈ 3.04 (vs theoretical 3.49 from 3840/1100)
+# Actual pixels/mm â‰ˆ 3.04 (vs theoretical 3.49 from 3840/1100)
 PIXELS_PER_MM = 3.04         
 
 # Depth clipping / viewer band configuration
 DEPTH_CLIP_MAX_MM = 3000  # legacy single-threshold clip (unused in viewer band mode)
 VIEWER_BAND_TOL_MM = 200  # when enabled, keep only pixels within +/- this tolerance of viewer depth
+
+# Lateral follow configuration (viewer moves left/right)
+LATERAL_FOLLOW_GAIN = 1.0
+
 
  
 
@@ -118,6 +122,10 @@ try:
                 IMAGE_OFFSET_X = int(_cal["IMAGE_OFFSET_X"])  # type: ignore[name-defined]
             if "IMAGE_OFFSET_Y" in _cal:
                 IMAGE_OFFSET_Y = int(_cal["IMAGE_OFFSET_Y"])  # type: ignore[name-defined]
+            if "REFERENCE_DISTANCE_MM" in _cal:
+                REFERENCE_DISTANCE_MM = int(_cal["REFERENCE_DISTANCE_MM"])  # type: ignore[name-defined]
+            if "LIFE_SIZE_SCALE_MULTIPLIER" in _cal:
+                LIFE_SIZE_SCALE_MULTIPLIER = float(_cal["LIFE_SIZE_SCALE_MULTIPLIER"])  # type: ignore[name-defined]
             # Load optional display-center-to-camera offsets (mm)
             if "DISPLAY_CAMERA_OFFSET_X_MM" in _cal:
                 DISPLAY_CAMERA_OFFSET_X_MM = int(_cal["DISPLAY_CAMERA_OFFSET_X_MM"])  # type: ignore[name-defined]
@@ -129,7 +137,7 @@ try:
 except Exception:
     pass
 
-# Log current display-camera offsets so they’re visible at startup
+# Log current display-camera offsets so theyâ€™re visible at startup
 try:
     print(
         f"DisplayCamera offset (mm): X={DISPLAY_CAMERA_OFFSET_X_MM}, Y={DISPLAY_CAMERA_OFFSET_Y_MM}"
@@ -250,7 +258,7 @@ with dai.Pipeline(device) as pipeline:
     # OpenCV window - setup for second monitor
     window_name = "Magic Mirror"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    # Auto-calibrate (10cm) mouse state
+    # Auto-calibrate (15cm) mouse state
     mouse_state = {"active": False, "points": []}
     cv2.setMouseCallback(window_name, _on_mouse, mouse_state)
     
@@ -386,7 +394,7 @@ with dai.Pipeline(device) as pipeline:
     saved_distance = None
     fixed_roi_mode = False  # Toggle for using fixed center ROI instead of face tracking
     freeze_scale = False  # Toggle to lock scale at 1.0 for calibration
-    # Auto-calibrate 100mm state
+    # Auto-calibrate 150mm state
     auto_calibrate_mode = False
     auto_saved_state = None
     # Manual ROI selection for calibration (non-face targets)
@@ -402,6 +410,11 @@ with dai.Pipeline(device) as pipeline:
     last_face_center_cam = None  # (x,y) in camera coords (pre-flip)
     last_face_conf_seen = 0.0
     last_face_conf_time = 0.0
+    # Lateral follow state
+    viewer_x_ema = None  # mm (legacy EMA, kept for reference)
+    viewer_x_last_time = 0.0
+    viewer_x_locked = None  # mm (last known good; sticky)
+    viewer_x_locked_time = 0.0
     show_depth_diag = False  # toggle to visualize ROI Z vs raw-face Z
     # Depth clip state (B toggle)
     depth_clip_enabled = False
@@ -505,13 +518,38 @@ with dai.Pipeline(device) as pipeline:
             
             # Get original frame dimensions (640w x 480h landscape)
             orig_h, orig_w = frame.shape[:2]
-            
+
+            # Compute raw-face depth (median around last face center in raw depth)
+            try:
+                if last_face_center_cam is not None and last_depth_raw is not None and orig_w > 0 and orig_h > 0:
+                    cx_cam, cy_cam = last_face_center_cam
+                    dh, dw = last_depth_raw.shape[:2]
+                    scale_x = dw / float(orig_w)
+                    scale_y = dh / float(orig_h)
+                    sx = int(round(cx_cam * scale_x))
+                    sy = int(round(cy_cam * scale_y))
+                    rwin = 6
+                    x1s = max(0, sx - rwin)
+                    x2s = min(dw - 1, sx + rwin)
+                    y1s = max(0, sy - rwin)
+                    y2s = min(dh - 1, sy + rwin)
+                    win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                    valid = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                    if np.any(valid):
+                        z_face_raw = float(np.median(win[valid]))
+            except Exception:
+                pass
+
             # Calculate scale based on depth FIRST (before any resizing)
             target_scale = current_scale  # Default to current scale
             
-            if distance_msg is not None:
-                z_mm = distance_msg.spatials.z
-                z_raw_for_print = z_mm
+            if (z_face_raw is not None and z_face_raw > 0 and not np.isnan(z_face_raw)) or (distance_msg is not None):
+                if z_face_raw is not None and z_face_raw > 0 and not np.isnan(z_face_raw):
+                    z_mm = float(z_face_raw)
+                    z_raw_for_print = z_mm
+                else:
+                    z_mm = distance_msg.spatials.z
+                    z_raw_for_print = z_mm
                 # Track centroid for mapping seed (in depth/camera space 640x480, pre-flip)
                 
                 
@@ -661,7 +699,7 @@ with dai.Pipeline(device) as pipeline:
             base_scale = min(DISPLAY_WIDTH / orig_w, DISPLAY_HEIGHT / orig_h) * LIFE_SIZE_SCALE_MULTIPLIER
             
             # Apply distance-based scaling
-            # At reference distance: current_scale = 1.0 → use base_scale (calibrated for 1:1)
+            # At reference distance: current_scale = 1.0 â†’ use base_scale (calibrated for 1:1)
             # Closer/farther: scales proportionally
             combined_scale = base_scale * current_scale
             
@@ -678,8 +716,8 @@ with dai.Pipeline(device) as pipeline:
             # - Camera sees you from that elevated/lowered angle
             #
             # To simulate a real mirror reflection:
-            # - If camera is ABOVE your eyes → shift image UP (so it appears at eye level)
-            # - If camera is BELOW your eyes → shift image DOWN
+            # - If camera is ABOVE your eyes â†’ shift image UP (so it appears at eye level)
+            # - If camera is BELOW your eyes â†’ shift image DOWN
             # - The offset scales with distance (closer = bigger offset needed)
             #
             # Example: Camera 150mm above your eyes, you're 500mm away
@@ -711,6 +749,58 @@ with dai.Pipeline(device) as pipeline:
                     parallax_scale = max(0.0, min(3.0, parallax_scale))
                 target_offset_x += base_x_px * parallax_scale
                 target_offset_y += base_y_px * parallax_scale
+
+                # Lateral follow: make image follow viewer left/right (mirror-equivalent)
+                try:
+                    if False and not freeze_scale and distance_msg is not None:
+                        viewer_x_mm = float(getattr(distance_msg.spatials, "x", 0.0))
+                        # Mirror-equivalent screen shift (mm) ≈ 0.5 * viewer_x_mm
+                        screen_shift_mm = 0.5 * viewer_x_mm * float(LATERAL_FOLLOW_GAIN)
+                        ppmm_x_disp = float(DISPLAY_WIDTH) / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
+                        target_offset_x += screen_shift_mm * ppmm_x_disp
+                except Exception:
+                    pass
+
+                # Lateral follow using last-known-good position (sticky) with sanity gating
+                try:
+                    now_ts = time.time()
+                    ppmm_x_disp = float(DISPLAY_WIDTH) / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
+                    recent_face_ok = (last_face_conf_seen >= 0.8) and ((now_ts - float(last_face_conf_time)) <= 1.0)
+                    vx = None
+                    if not freeze_scale and distance_msg is not None and hasattr(distance_msg, "spatials"):
+                        _vx = float(getattr(distance_msg.spatials, "x", float("nan")))  # mm
+                        if np.isfinite(_vx):
+                            vx = _vx
+
+                    # Update the locked position only on recent, confident face + valid depth
+                    if recent_face_ok and (vx is not None):
+                        if viewer_x_locked is None:
+                            viewer_x_locked = vx
+                        else:
+                            # Deadband to ignore small jitters
+                            if abs(vx - viewer_x_locked) < 4.0:
+                                pass
+                            else:
+                                # Limit per-frame step to avoid jumps
+                                max_step_mm = 100.0
+                                delta = max(-max_step_mm, min(max_step_mm, vx - viewer_x_locked))
+                                viewer_x_locked += delta
+                        viewer_x_locked_time = now_ts
+
+                    # If we have a lock, use it; decay gently to center if stale
+                    if viewer_x_locked is not None:
+                        if (now_ts - viewer_x_locked_time) > 0.8:
+                            viewer_x_locked *= 0.98
+                            # Snap to zero if extremely small to avoid drift
+                            if abs(viewer_x_locked) < 1.0:
+                                viewer_x_locked = 0.0
+                        screen_shift_mm = 0.5 * float(viewer_x_locked) * float(LATERAL_FOLLOW_GAIN)
+                        # Flip sign because the display feed is mirrored (cv2.flip(...,1))
+                        # Positive camera X (viewer moves right) should shift image left in buffer coords
+                        target_offset_x -= screen_shift_mm * ppmm_x_disp
+                except Exception:
+                    pass
+
             
             # Clamp target offsets to prevent extreme values
             MAX_OFFSET = DISPLAY_HEIGHT * 2
@@ -772,6 +862,48 @@ with dai.Pipeline(device) as pipeline:
                 output_frame[dst_y_start:dst_y_end, dst_x_start:dst_x_end] = frame[src_y_start:src_y_end, src_x_start:src_x_end]
             
             frame = output_frame
+
+            # Optional on-screen ruler (150mm) for visual calibration
+            if show_ruler:
+                try:
+                    ppmm_x = DISPLAY_WIDTH / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
+                    ppmm_y = DISPLAY_HEIGHT / max(1e-6, float(DISPLAY_PHYSICAL_HEIGHT_MM))
+                    ruler_mm = 150
+                    len_px_h = int(round(ruler_mm * ppmm_x))
+                    len_px_v = int(round(ruler_mm * ppmm_y))
+                    cx = DISPLAY_WIDTH // 2
+                    cy = DISPLAY_HEIGHT // 2
+                    overlay = frame.copy()
+                    # Background box
+                    box_w = max(420, len_px_h + 120)
+                    box_h = max(300, len_px_v + 120)
+                    bx1 = max(10, cx - box_w // 2)
+                    by1 = max(10, cy - box_h // 2)
+                    bx2 = min(DISPLAY_WIDTH - 10, bx1 + box_w)
+                    by2 = min(DISPLAY_HEIGHT - 10, by1 + box_h)
+                    cv2.rectangle(overlay, (bx1, by1), (bx2, by2), (0, 0, 0), -1)
+                    # Horizontal ruler
+                    hx1 = cx - len_px_h // 2
+                    hx2 = hx1 + len_px_h
+                    hy = cy - 40
+                    cv2.line(overlay, (hx1, hy), (hx2, hy), (0, 255, 255), 8)
+                    for tx in (hx1, (hx1 + hx2) // 2, hx2):
+                        cv2.line(overlay, (tx, hy - 20), (tx, hy + 20), (0, 255, 255), 6)
+                    # Vertical ruler
+                    vy1 = cy - len_px_v // 2
+                    vy2 = vy1 + len_px_v
+                    vx = cx + 40
+                    cv2.line(overlay, (vx, vy1), (vx, vy2), (0, 255, 255), 8)
+                    for ty in (vy1, (vy1 + vy2) // 2, vy2):
+                        cv2.line(overlay, (vx - 20, ty), (vx + 20, ty), (0, 255, 255), 6)
+                    # Labels
+                    label = f"{ruler_mm} mm"
+                    cv2.putText(overlay, label, (hx1, hy - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA)
+                    cv2.putText(overlay, label, (vx + 30, vy1 + 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA)
+                    # Blend overlay
+                    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+                except Exception:
+                    pass
 
             # Viewer band mask: when enabled, keep only the viewer's connected depth region within +/- VIEWER_BAND_TOL_MM
             if depth_clip_enabled and last_depth_raw is not None:
@@ -1149,8 +1281,8 @@ with dai.Pipeline(device) as pipeline:
                         cv2.circle(frame, p, 10, (0, 255, 0), -1)
                     if len(pts) == 2:
                         cv2.line(frame, pts[0], pts[1], (0, 255, 0), 4)
-                    cv2.putText(frame, f"AUTO-CAL 100mm @ {REFERENCE_DISTANCE_MM}mm: Click two points 10cm apart (press G to cancel)",
-                                (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+                    cv2.putText(frame, f"AUTO-CAL 150mm @ {REFERENCE_DISTANCE_MM}mm: Click two points 15cm apart (press G to cancel)",
+                                 (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
                     cv2.putText(frame, "Stand steady at reference distance; parallax and distance scaling are disabled",
                                 (40, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                 except Exception:
@@ -1210,16 +1342,31 @@ with dai.Pipeline(device) as pipeline:
                     (x1, y1), (x2, y2) = mouse_state["points"]
                     dx = abs(x2 - x1)
                     dy = abs(y2 - y1)
-                    # Convert 100mm to display pixels on dominant axis
+                    # Require mostly horizontal or vertical selection to reduce diagonal error
+                    dom = max(dx, dy)
+                    if dom <= 0:
+                        raise RuntimeError("Selection too small; click points farther apart.")
+                    if min(dx, dy) / float(dom) > 0.25:
+                        raise RuntimeError("Please click a mostly horizontal or vertical segment (avoid diagonal).")
+                    # Convert HALF of 150mm to display pixels on dominant axis (mirror shows half angular size)
                     ppmm_x = DISPLAY_WIDTH / DISPLAY_PHYSICAL_WIDTH_MM
                     ppmm_y = DISPLAY_HEIGHT / DISPLAY_PHYSICAL_HEIGHT_MM
                     if dx >= dy:
-                        target_px = 100.0 * ppmm_x
+                        target_px = 75.0 * ppmm_x
                         measured_px = max(1.0, dx)
                     else:
-                        target_px = 100.0 * ppmm_y
+                        target_px = 75.0 * ppmm_y
                         measured_px = max(1.0, dy)
 
+
+                    do_update = True
+                    try:
+                        rel_err = abs(target_px - measured_px) / max(1.0, float(target_px))
+                    except Exception:
+                        rel_err = 0.0
+                    if rel_err <= 0.03:
+                        print("Auto-calibrate 150mm: within 3% tolerance; multiplier unchanged.")
+                        do_update = False
                     # Also set reference distance from raw depth at segment midpoint (like multi-depth)
                     try:
                         if last_depth_raw is not None:
@@ -1248,13 +1395,27 @@ with dai.Pipeline(device) as pipeline:
                     except Exception:
                         pass
                     # Compute ratio and clamp to avoid runaway scaling if clicks are off
-                    ratio = float(target_px) / float(measured_px)
-                    ratio = max(0.5, min(2.0, ratio))
-                    old = LIFE_SIZE_SCALE_MULTIPLIER
-                    LIFE_SIZE_SCALE_MULTIPLIER = old * ratio
-                    print(f"Auto-calibrate 100mm: measured {measured_px:.1f}px, target {target_px:.1f}px -> multiplier {old:.4f} -> {LIFE_SIZE_SCALE_MULTIPLIER:.4f}")
-                except Exception as e:
-                    print(f"Auto-calibrate error: {e}")
+                    if do_update:
+                        # Compute ratio and clamp to avoid runaway scaling if clicks are off
+                        ratio = float(target_px) / float(measured_px)
+                        ratio = max(0.85, min(1.15, ratio))
+                        old = LIFE_SIZE_SCALE_MULTIPLIER
+                        LIFE_SIZE_SCALE_MULTIPLIER = old * ratio
+                        print(f"Auto-calibrate 150mm: measured {measured_px:.1f}px, target {target_px:.1f}px -> multiplier {old:.4f} -> {LIFE_SIZE_SCALE_MULTIPLIER:.4f}")
+                        # Persist updated multiplier and current reference distance
+                        try:
+                            cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                            cal = {}
+                            if os.path.exists(cal_path):
+                                with open(cal_path, "r", encoding="utf-8") as f:
+                                    cal = json.load(f) or {}
+                            cal["LIFE_SIZE_SCALE_MULTIPLIER"] = float(LIFE_SIZE_SCALE_MULTIPLIER)
+                            cal["REFERENCE_DISTANCE_MM"] = int(REFERENCE_DISTANCE_MM)
+                            with open(cal_path, "w", encoding="utf-8") as f:
+                                json.dump(cal, f, indent=2)
+                            print("Saved multiplier and reference distance to calibration.json")
+                        except Exception as e:
+                            print(f"Save error: {e}")
                 finally:
                     # Reset and restore state
                     auto_calibrate_mode = False
@@ -1328,11 +1489,11 @@ with dai.Pipeline(device) as pipeline:
                     if dx >= dy:
                         measured_px = max(1.0, dx)
                         axis = "x"
-                        target_px = 100.0 * ppmm_x
+                        target_px = 75.0 * ppmm_x
                     else:
                         measured_px = max(1.0, dy)
                         axis = "y"
-                        target_px = 100.0 * ppmm_y
+                        target_px = 75.0 * ppmm_y
                     multi_samples.append({"z": z, "measured_px": measured_px, "axis": axis})
                     print(f"Captured sample: z={z:.0f}mm, measured={measured_px:.1f}px (axis {axis})")
                 except Exception as e:
@@ -1366,11 +1527,47 @@ with dai.Pipeline(device) as pipeline:
         elif key == 32 and calibration_mode:  # SPACE key
             if calibration_step == 0:
                 # Set reference distance
-                if distance_msg is not None and distance_msg.spatials.z > 0:
-                    REFERENCE_DISTANCE_MM = int(distance_msg.spatials.z)
+                # Prefer raw-face depth for reference; fallback to ROI depth
+                ref_z = None
+                try:
+                    if last_face_center_cam is not None and last_depth_raw is not None and orig_w > 0 and orig_h > 0:
+                        cx_cam, cy_cam = last_face_center_cam
+                        dh, dw = last_depth_raw.shape[:2]
+                        scale_x = dw / float(orig_w)
+                        scale_y = dh / float(orig_h)
+                        sx = int(round(cx_cam * scale_x))
+                        sy = int(round(cy_cam * scale_y))
+                        r = 6
+                        x1s = max(0, sx - r)
+                        x2s = min(dw - 1, sx + r)
+                        y1s = max(0, sy - r)
+                        y2s = min(dh - 1, sy + r)
+                        win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                        valid = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                        if np.any(valid):
+                            ref_z = float(np.median(win[valid]))
+                except Exception:
+                    ref_z = None
+                if ref_z is None and distance_msg is not None and distance_msg.spatials.z > 0:
+                    ref_z = float(distance_msg.spatials.z)
+                if ref_z is not None and ref_z > 0:
+                    REFERENCE_DISTANCE_MM = int(ref_z)
                     calibration_step = 1
                     current_scale = 1.0  # Reset scale
-                    print(f"\nReference distance set to {REFERENCE_DISTANCE_MM}mm")
+                    print(f"\nReference distance set to {REFERENCE_DISTANCE_MM}mm (raw-face preferred)")
+                    # Persist to calibration.json
+                    try:
+                        cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                        cal = {}
+                        if os.path.exists(cal_path):
+                            with open(cal_path, "r", encoding="utf-8") as f:
+                                cal = json.load(f) or {}
+                        cal["REFERENCE_DISTANCE_MM"] = int(REFERENCE_DISTANCE_MM)
+                        with open(cal_path, "w", encoding="utf-8") as f:
+                            json.dump(cal, f, indent=2)
+                        print(f"Saved REFERENCE_DISTANCE_MM={REFERENCE_DISTANCE_MM} to calibration.json")
+                    except Exception as e:
+                        print(f"Save error: {e}")
                     print("Now adjust image position with arrow keys or WASD")
                     print("Press SPACE when aligned")
                 else:
@@ -1432,12 +1629,16 @@ with dai.Pipeline(device) as pipeline:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
             else:
                 cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        elif key == ord("u"):
+            # Toggle on-screen 150mm ruler overlay
+            show_ruler = not show_ruler
+            print("Ruler (150mm):", "ON" if show_ruler else "OFF")
         elif key == ord("b"):
             # Toggle viewer band masking (keep only +/- VIEWER_BAND_TOL_MM around viewer depth)
             depth_clip_enabled = not depth_clip_enabled
             if not depth_clip_enabled:
                 viewer_band_target_z = None
-            print(f"Viewer band mask (±{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")
+            print(f"Viewer band mask (Â±{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")
         elif key == ord("["):
             # Nudge parallax distance exponent down and persist
             try:
@@ -1610,7 +1811,7 @@ with dai.Pipeline(device) as pipeline:
                     y_px = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
                     try:
                         print(
-                            f"Calibrated CAMERA_OFFSET: X={CAMERA_OFFSET_X_MM}mm, Y={CAMERA_OFFSET_Y_MM}mm (px shift ~ X={x_px:.0f}, Y={y_px:.0f}); Z≈{cz:.0f}mm"
+                            f"Calibrated CAMERA_OFFSET: X={CAMERA_OFFSET_X_MM}mm, Y={CAMERA_OFFSET_Y_MM}mm (px shift ~ X={x_px:.0f}, Y={y_px:.0f}); Zâ‰ˆ{cz:.0f}mm"
                         )
                     except Exception:
                         print(
@@ -1665,7 +1866,7 @@ with dai.Pipeline(device) as pipeline:
                 collecting_sample = True
                 mouse_state["active"] = True
                 mouse_state["points"] = []
-                print("Click two content points 100mm apart to capture sample")
+            print("Click two content points 150mm apart to capture sample")
         elif key == 8:  # BACKSPACE
             if multi_cal_mode and multi_samples:
                 removed = multi_samples.pop()
@@ -1681,7 +1882,7 @@ with dai.Pipeline(device) as pipeline:
                     for s in multi_samples:
                         z = float(s["z"])
                         d = (REFERENCE_DISTANCE_MM / z) - 1.0
-                        target_px = 100.0 * (ppmm_x if s["axis"] == "x" else ppmm_y)
+                        target_px = 75.0 * (ppmm_x if s["axis"] == "x" else ppmm_y)
                         ratio = float(target_px) / float(s["measured_px"])  # desired scale at z
                         A.append([d, d * d])
                         b.append([ratio - 1.0])
@@ -1716,7 +1917,7 @@ with dai.Pipeline(device) as pipeline:
                 except Exception as e:
                     print(f"Solve error: {e}")
         elif key == ord("g"):
-            # Toggle Auto-calibrate 100mm mode
+            # Toggle Auto-calibrate 150mm mode
             auto_calibrate_mode = not auto_calibrate_mode
             if auto_calibrate_mode:
                 # Save and then freeze scale, disable parallax and distance scaling for a clean measurement
@@ -1734,7 +1935,7 @@ with dai.Pipeline(device) as pipeline:
                 parallax_weight_y_live = 0.0
                 mouse_state["active"] = True
                 mouse_state["points"] = []
-                print("Auto-calibrate started: stand at reference distance and Click two content points 100mm apart")
+                print("Auto-calibrate started: stand at reference distance and Click two content points 150mm apart")
             else:
                 mouse_state["active"] = False
                 mouse_state["points"] = []
@@ -1799,7 +2000,7 @@ with dai.Pipeline(device) as pipeline:
             print("F: Toggle fullscreen")
             print("M: Move window to next monitor")
             print("I: Multi-depth calibration (O capture, ENTER solve, BACKSPACE undo)")
-            print("G: Auto-calibrate 100mm (click two points)")
+            print("G: Auto-calibrate 150mm (click two points)")
             print("P: Save screenshot")
             print("Q: Quit (and show final values)")
             print("H: Show this help")
@@ -1819,6 +2020,10 @@ with dai.Pipeline(device) as pipeline:
     last_fixed_roi_print_time = 0.0
     last_raw_z = None
     last_clamped_z = None
+
+
+
+
 
 
 
