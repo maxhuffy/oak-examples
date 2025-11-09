@@ -402,6 +402,7 @@ with dai.Pipeline(device) as pipeline:
     last_face_center_cam = None  # (x,y) in camera coords (pre-flip)
     last_face_conf_seen = 0.0
     last_face_conf_time = 0.0
+    show_depth_diag = False  # toggle to visualize ROI Z vs raw-face Z
     # Depth clip state (B toggle)
     depth_clip_enabled = False
     viewer_band_target_z = None
@@ -488,6 +489,8 @@ with dai.Pipeline(device) as pipeline:
         if video_msg is not None:
             # Convert to OpenCV format
             frame = video_msg.getCvFrame()
+            # Reset per-frame diagnostics
+            z_face_raw = None
             # Update latest raw depth frame for host-side sampling
             try:
                 depth_raw_msg = depth_raw_queue.tryGet()
@@ -874,7 +877,26 @@ with dai.Pipeline(device) as pipeline:
                 except Exception:
                     pass
 
-            # (Depth-based pink highlighting removed per request)
+            # Compute raw-face depth (for diagnostics and capture): sample median around last face center
+            try:
+                if last_face_center_cam is not None and last_depth_raw is not None:
+                    cx_cam, cy_cam = last_face_center_cam
+                    dh, dw = last_depth_raw.shape[:2]
+                    scale_x = dw / float(orig_w) if orig_w else 1.0
+                    scale_y = dh / float(orig_h) if orig_h else 1.0
+                    sx = int(round(cx_cam * scale_x))
+                    sy = int(round(cy_cam * scale_y))
+                    rwin = 6
+                    x1s = max(0, sx - rwin)
+                    x2s = min(dw - 1, sx + rwin)
+                    y1s = max(0, sy - rwin)
+                    y2s = min(dh - 1, sy + rwin)
+                    win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                    valid = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                    if np.any(valid):
+                        z_face_raw = float(np.median(win[valid]))
+            except Exception:
+                z_face_raw = None
 
             # Draw persistent depth readout if set
             try:
@@ -891,6 +913,43 @@ with dai.Pipeline(device) as pipeline:
                     cv2.putText(frame, text, (x, y), font, scale, (0, 255, 255), thickness, cv2.LINE_AA)
             except Exception:
                 pass
+
+            # Optional depth diagnostics overlay (big, centered like 'y' readout)
+            if show_depth_diag:
+                try:
+                    lines = []
+                    if last_clamped_z is not None:
+                        lines.append(f"ROI Z: {last_clamped_z:.0f} mm")
+                    if z_face_raw is not None:
+                        lines.append(f"RawFace Z: {z_face_raw:.0f} mm")
+                    if lines:
+                        font = cv2.FONT_HERSHEY_SIMPLEX
+                        scale = 2.6
+                        thickness = 7
+                        total_h = 0
+                        widths = []
+                        heights = []
+                        for s in lines:
+                            (tw, th), _ = cv2.getTextSize(s, font, scale, thickness)
+                            widths.append(tw)
+                            heights.append(th)
+                            total_h += th + 20
+                        total_h -= 20
+                        box_w = max(widths) + 80
+                        box_h = total_h + 80
+                        x = max(20, (DISPLAY_WIDTH - box_w) // 2)
+                        y = 200
+                        # Background rectangle
+                        cv2.rectangle(frame, (x, y - 60), (x + box_w, y - 60 + box_h), (0, 0, 0), -1)
+                        # Draw lines centered within box
+                        cur_y = y
+                        for idx, s in enumerate(lines):
+                            (tw, th), _ = cv2.getTextSize(s, font, scale, thickness)
+                            tx = x + (box_w - tw) // 2
+                            cv2.putText(frame, s, (tx, cur_y), font, scale, (0, 255, 255), thickness, cv2.LINE_AA)
+                            cur_y += th + 20
+                except Exception:
+                    pass
 
             # Manual ROI override during calibration: map display rectangle to camera ROI
             if manual_roi_active and (auto_calibrate_mode or multi_cal_mode) and len(manual_roi_points) == 2:
@@ -1451,6 +1510,10 @@ with dai.Pipeline(device) as pipeline:
                 filename = f"mirror_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
+        elif key == ord("t"):
+            # Toggle depth diagnostics overlay (ROI vs raw-face depth)
+            show_depth_diag = not show_depth_diag
+            print("Depth diagnostics:", "ON" if show_depth_diag else "OFF")
         elif key == ord("y"):
             # Capture and persist current viewer depth using raw depth at face center
             try:
