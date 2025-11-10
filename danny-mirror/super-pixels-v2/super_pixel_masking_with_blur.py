@@ -2,7 +2,7 @@
 import argparse
 import os
 import numpy as np
-from skimage import io, img_as_float, color, morphology, filters
+from skimage import io, img_as_float, color, morphology, filters, measure
 from skimage.segmentation import slic
 
 
@@ -36,8 +36,8 @@ def get_union_bbox(alpha1, alpha2):
 def run_slic(img):
     return slic(
         img,
-        n_segments=6000,
-        compactness=30,
+        n_segments=3000,
+        compactness=25,
         sigma=0,
         start_label=1,
     )
@@ -60,12 +60,41 @@ def trimmed_lab_deltaE_from_masks(orig_lab, edit_lab, mask, trim_ratio=0.05):
 
 
 def color_erosion(img, radius=1):
-    """Apply morphological erosion per color channel."""
     selem = morphology.disk(radius)
     eroded = np.zeros_like(img)
     for c in range(3):
         eroded[..., c] = morphology.erosion(img[..., c], selem)
     return eroded
+
+
+def keep_largest_components(mask_uint8, max_components=4, min_area=0):
+    """
+    mask_uint8: 0/255
+    keep at most `max_components` biggest blobs
+    and also drop anything smaller than `min_area`
+    """
+    bin_mask = mask_uint8 > 0
+    labeled = measure.label(bin_mask, connectivity=2)
+    if labeled.max() == 0:
+        return mask_uint8
+
+    # collect (label, area)
+    areas = []
+    for lab in range(1, labeled.max() + 1):
+        a = np.sum(labeled == lab)
+        if a >= min_area:
+            areas.append((lab, a))
+
+    # sort big → small
+    areas.sort(key=lambda x: x[1], reverse=True)
+    areas = areas[:max_components]  # keep only N biggest
+
+    keep_labels = {lab for lab, _ in areas}
+    cleaned = np.zeros_like(bin_mask)
+    for lab in keep_labels:
+        cleaned |= (labeled == lab)
+
+    return (cleaned.astype(np.uint8) * 255)
 
 
 def main():
@@ -74,11 +103,7 @@ def main():
     )
     parser.add_argument("original", help="path to original.png")
     parser.add_argument("edited", help="path to edited.png")
-    parser.add_argument(
-        "--out",
-        default="super_pixel_mask.png",
-        help="output mask path (default: super_pixel_mask.png)",
-    )
+    parser.add_argument("--out", default="super_pixel_mask.png")
     parser.add_argument("--kernel-size", type=int, default=9)
     parser.add_argument("--kernel-trim", type=float, default=0.05)
     parser.add_argument("--kernel-thresh", type=float, default=8.0)
@@ -86,32 +111,29 @@ def main():
     parser.add_argument("--alpha-dilate", type=int, default=1)
     parser.add_argument("--region-trim", type=float, default=0.05)
     parser.add_argument("--region-thresh", type=float, default=6.0)
-    # NEW: gentle blur right after crop
-    parser.add_argument(
-        "--blur-sigma",
-        type=float,
-        default=8,
-        help="Gaussian blur sigma applied to both crops after erosions (0 to disable)",
-    )
+    parser.add_argument("--blur-sigma", type=float, default=8)
+    # NEW: artifact-removal controls
+    parser.add_argument("--max-components", type=int, default=4,
+                        help="keep at most this many big blobs at the very end")
+    parser.add_argument("--min-component-area", type=int, default=200,
+                        help="drop connected components smaller than this many pixels")
     args = parser.parse_args()
 
-    # 1) load
+    # load
     orig_img, orig_alpha = load_image_and_alpha(args.original)
     edit_img, edit_alpha = load_image_and_alpha(args.edited)
 
     if orig_img.shape != edit_img.shape:
-        raise ValueError("Images must be same size for this script.")
+        raise ValueError("Images must be same size.")
 
-    # 2) very small edge cleanup on both images (color erosion)
+    # small erosions
     orig_img = color_erosion(orig_img, radius=1)
     edit_img = color_erosion(edit_img, radius=1)
-
-    # 3) extra small erosion on the first (original) image
     orig_img = color_erosion(orig_img, radius=1)
 
     H, W, _ = orig_img.shape
 
-    # 4) work only inside union bbox
+    # crop to union bbox
     ymin, ymax, xmin, xmax = get_union_bbox(orig_alpha, edit_alpha)
     orig_c = orig_img[ymin:ymax, xmin:xmax, :]
     edit_c = edit_img[ymin:ymax, xmin:xmax, :]
@@ -119,31 +141,30 @@ def main():
     edit_a_c = edit_alpha[ymin:ymax, xmin:xmax]
     h_c, w_c, _ = orig_c.shape
 
-    # 4.5) NEW: light blur to kill tiny high-frequency differences
+    # blur
     if args.blur_sigma > 0:
         orig_c = filters.gaussian(orig_c, sigma=args.blur_sigma, channel_axis=-1)
         edit_c = filters.gaussian(edit_c, sigma=args.blur_sigma, channel_axis=-1)
 
-    # 5) SLIC on both, then combine → superset
+    # slic → superset
     orig_labels = run_slic(orig_c)
     edit_labels = run_slic(edit_c)
-
     pairs = np.stack([orig_labels, edit_labels], axis=-1).reshape(-1, 2)
     unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
     superset_labels = inverse.reshape(h_c, w_c) + 1
     n_regions = len(unique_pairs)
 
-    # 6) union content mask, dilated
+    # union alpha (dilated)
     union_alpha_c = (orig_a_c | edit_a_c)
     if args.alpha_dilate > 0:
         selem = morphology.square(1 + 2 * args.alpha_dilate)
         union_alpha_c = morphology.dilation(union_alpha_c, selem)
 
-    # 7) convert to Lab
+    # lab
     orig_lab = color.rgb2lab(orig_c)
     edit_lab = color.rgb2lab(edit_c)
 
-    # 8) build final mask
+    # region loop
     keep_mask_c = np.zeros((h_c, w_c), dtype=bool)
     ks = args.kernel_size
 
@@ -163,7 +184,7 @@ def main():
 
         region_is_changed = False
 
-        # per-kernel pass
+        # per-kernel
         for y0 in range(rymin, rymax + 1, ks):
             if region_is_changed:
                 break
@@ -205,17 +226,27 @@ def main():
         if region_is_changed:
             keep_mask_c[region_pixels] = True
 
-    # 9) paste back to full-size
+    # close tiny seams in crop
+    keep_mask_c = morphology.binary_closing(keep_mask_c, morphology.disk(1))
+
+    # paste to full-size
     full_mask = np.zeros((H, W), dtype=np.uint8)
     full_mask[ymin:ymax, xmin:xmax] = keep_mask_c.astype(np.uint8) * 255
 
-    # 10) save
+    # clip by edited.png transparency (this can create new floaters!)
+    full_mask[~edit_alpha] = 0
+
+    # NOW do artifact removal on the final mask
+    if args.max_components > 0:
+        full_mask = keep_largest_components(
+            full_mask,
+            max_components=args.max_components,
+            min_area=args.min_component_area,
+        )
+
+    # save
     io.imsave(args.out, full_mask)
-    print(
-        f"✅ Saved mask to {os.path.abspath(args.out)} | "
-        f"regions={n_regions}, kept_pixels={keep_mask_c.sum()} "
-        f"({keep_mask_c.sum()/(h_c*w_c):.2%} of crop)"
-    )
+    print(f"✅ Saved mask to {os.path.abspath(args.out)} | regions={n_regions}")
 
 
 if __name__ == "__main__":
