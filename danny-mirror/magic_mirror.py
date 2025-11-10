@@ -110,6 +110,8 @@ ALIGN_TARGET_Y_REL = 0.25  # 25% from top ("75% up" from bottom)
 
 # Static image overlay (black background + image at native resolution)
 STATIC_IMAGE_PATH = None  # Loaded from calibration.json or defaults to overlay.png in this folder
+# Background image path for viewer band mask fill
+BACKGROUND_IMAGE_PATH = None
 
 
  
@@ -161,6 +163,8 @@ try:
                 ALIGN_TARGET_Y_REL = float(_cal["ALIGN_TARGET_Y_REL"])  # type: ignore[name-defined]
             if "STATIC_IMAGE_PATH" in _cal:
                 STATIC_IMAGE_PATH = str(_cal["STATIC_IMAGE_PATH"])  # type: ignore[name-defined]
+            if "BACKGROUND_IMAGE_PATH" in _cal:
+                BACKGROUND_IMAGE_PATH = str(_cal["BACKGROUND_IMAGE_PATH"])  # type: ignore[name-defined]
             # Optional still capture resolution (defaults to HD to avoid OOM)
             if "STILL_CAPTURE_WIDTH" in _cal:
                 try:
@@ -496,6 +500,8 @@ with dai.Pipeline(device) as pipeline:
     last_color_raw_frame = None
     # One-shot still request (teardown + temporary pipeline)
     one_shot_still_request = False
+    # Background image cache for viewer band mask
+    background_disp = None  # resized to DISPLAY size for fast compositing
     # Resolve and sanity-check static image path early (avoid OpenCV warnings)
     try:
         base_dir = os.path.dirname(__file__)
@@ -1227,16 +1233,17 @@ with dai.Pipeline(device) as pipeline:
                             band_mask = (valid & in_band)
                             if band_mask.any():
                                 band_u8 = (band_mask.astype(np.uint8) * 255)
-                                # Clean the band to connect body parts
+                                # Clean the band to connect body parts and remove speckles
                                 k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
                                 band_u8 = cv2.morphologyEx(band_u8, cv2.MORPH_CLOSE, k_close, iterations=1)
+                                k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                                band_u8 = cv2.morphologyEx(band_u8, cv2.MORPH_OPEN, k_open, iterations=1)
                                 # Add a bit of vertical dilation to connect torso/legs
                                 k_vert = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 17))
                                 band_u8 = cv2.dilate(band_u8, k_vert, iterations=1)
                                 # Choose connected component that overlaps a vertical corridor beneath face center
                                 num_labels, labels = cv2.connectedComponents(band_u8)
                                 chosen = None
-                                best_score = -1
                                 try:
                                     if last_face_center_cam is not None:
                                         cx_cam, cy_cam = last_face_center_cam
@@ -1246,27 +1253,42 @@ with dai.Pipeline(device) as pipeline:
                                         ry = int(round(int(cy_cam) * combined_scale))
                                         sx = rx - src_x_start
                                         sy = ry - src_y_start
-                                        # Build a corridor mask around face X extending downward
-                                        corridor = np.zeros_like(band_u8, dtype=np.uint8)
-                                        half_w = max(40, int(0.12 * corridor.shape[1]))
-                                        x1c = max(0, sx - half_w)
-                                        x2c = min(corridor.shape[1] - 1, sx + half_w)
-                                        y1c = max(0, sy - int(0.5 * half_w))
-                                        y2c = corridor.shape[0] - 1
-                                        corridor[y1c:y2c+1, x1c:x2c+1] = 255
-                                        for lbl in range(1, num_labels):
-                                            comp = (labels == lbl)
-                                            # Score by overlap with corridor and area (favor larger overlap, then area)
-                                            overlap = int(np.count_nonzero(comp & (corridor > 0)))
-                                            if overlap <= 0:
-                                                continue
-                                            area = int(np.count_nonzero(comp))
-                                            score = overlap * 10 + area
-                                            if score > best_score:
-                                                best_score = score
-                                                chosen = comp
+                                        if 0 <= sx < band_u8.shape[1] and 0 <= sy < band_u8.shape[0]:
+                                            seed_lbl = int(labels[sy, sx])
+                                            if seed_lbl > 0:
+                                                chosen = (labels == seed_lbl)
                                 except Exception:
                                     chosen = None
+                                if chosen is None:
+                                    # Corridor-guided selection as fallback
+                                    best_score = -1
+                                    try:
+                                        if last_face_center_cam is not None:
+                                            cx_cam, cy_cam = last_face_center_cam
+                                            fx_mir = (orig_w - 1) - int(cx_cam)
+                                            rx = int(round(fx_mir * combined_scale))
+                                            ry = int(round(int(cy_cam) * combined_scale))
+                                            sx = rx - src_x_start
+                                            sy = ry - src_y_start
+                                            corridor = np.zeros_like(band_u8, dtype=np.uint8)
+                                            half_w = max(40, int(0.12 * corridor.shape[1]))
+                                            x1c = max(0, sx - half_w)
+                                            x2c = min(corridor.shape[1] - 1, sx + half_w)
+                                            y1c = max(0, sy - int(0.5 * half_w))
+                                            y2c = corridor.shape[0] - 1
+                                            corridor[y1c:y2c+1, x1c:x2c+1] = 255
+                                            for lbl in range(1, num_labels):
+                                                comp = (labels == lbl)
+                                                overlap = int(np.count_nonzero(comp & (corridor > 0)))
+                                                if overlap <= 0:
+                                                    continue
+                                                area = int(np.count_nonzero(comp))
+                                                score = overlap * 10 + area
+                                                if score > best_score:
+                                                    best_score = score
+                                                    chosen = comp
+                                    except Exception:
+                                        chosen = None
                                 # Fallback: choose largest component if no seeded overlap
                                 if chosen is None and num_labels > 1:
                                     max_area = -1
@@ -1277,10 +1299,44 @@ with dai.Pipeline(device) as pipeline:
                                             max_area = area
                                             chosen = comp
                                 if chosen is not None:
+                                    # Two-pass tighten: recenter band on component median depth and shrink edges
                                     roi = frame[dst_y_start:dst_y_end, dst_x_start:dst_x_end]
                                     if roi.shape[:2] == chosen.shape:
-                                        inv = ~chosen
-                                        roi[inv] = 0
+                                        try:
+                                            comp_valid = (chosen & valid)
+                                            if comp_valid.any():
+                                                comp_depths = depth_crop[comp_valid]
+                                                comp_med = float(np.median(comp_depths))
+                                                tight_tol = float(min(VIEWER_BAND_TOL_MM * 0.6, 120.0))
+                                                tight = (valid & (np.abs(depth_crop - comp_med) <= tight_tol))
+                                                # Restrict to component and erode slightly to avoid halos
+                                                chosen_tight = (tight & chosen)
+                                                ct_u8 = (chosen_tight.astype(np.uint8) * 255)
+                                                k_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                                                ct_u8 = cv2.erode(ct_u8, k_er, iterations=1)
+                                                chosen_final = (ct_u8 > 0)
+                                            else:
+                                                chosen_final = chosen
+                                        except Exception:
+                                            chosen_final = chosen
+                                        inv = ~chosen_final
+                                        if background_disp is not None and background_disp.shape[:2] == (DISPLAY_HEIGHT, DISPLAY_WIDTH):
+                                            bg_roi = background_disp[dst_y_start:dst_y_end, dst_x_start:dst_x_end]
+                                            try:
+                                                if bg_roi.shape[2] == 4:
+                                                    # Alpha composite: bg over frame where inv
+                                                    alpha = (bg_roi[:, :, 3:4].astype(np.float32)) / 255.0
+                                                    fg = roi.astype(np.float32)
+                                                    bg_rgb = bg_roi[:, :, :3].astype(np.float32)
+                                                    # Only apply on inv
+                                                    mask = inv.astype(np.float32)
+                                                    roi[:] = (mask * (alpha * bg_rgb + (1.0 - alpha) * fg) + (1.0 - mask) * fg).astype(np.uint8)
+                                                else:
+                                                    roi[inv] = bg_roi[inv]
+                                            except Exception:
+                                                roi[inv] = 0
+                                        else:
+                                            roi[inv] = 0
                 except Exception:
                     pass
 
@@ -1944,7 +2000,7 @@ with dai.Pipeline(device) as pipeline:
             depth_clip_enabled = not depth_clip_enabled
             if not depth_clip_enabled:
                 viewer_band_target_z = None
-            print(f"Viewer band mask (Â±{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")
+            print(f"Viewer band mask (+/-{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")
         elif key == ord("["):
             # Nudge parallax distance exponent down and persist
             try:
