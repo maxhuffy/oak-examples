@@ -26,8 +26,8 @@ def get_union_bbox(alpha1, alpha2):
     if ys.size == 0 or xs.size == 0:
         h, w = alpha1.shape
         return 0, h, 0, w
-    ymin, ymax = ys.min(), ys.max() + 1
-    xmin, xmax = xs.min(), xs.max() + 1
+    ymin, ymax = ys.min(), ys.max() + 10
+    xmin, xmax = xs.min(), xs.max() + 10
     return ymin, ymax, xmin, xmax
 
 
@@ -35,7 +35,7 @@ def run_slic_like_notebook(img):
     img_float = img_as_float(img)
     labels = slic(
         img_float,
-        n_segments=2000,
+        n_segments=2100,
         compactness=20,
         sigma=1,
         start_label=1,
@@ -89,7 +89,7 @@ def boundaries_to_rgb(orig_bounds, edit_bounds):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Crop to visible area, run superpixel boundaries, and paste result back into full-size image."
+        description="Crop to visible area, run superpixel boundaries, and paste back to full size."
     )
     parser.add_argument("original", help="path to original.png")
     parser.add_argument("edited", help="path to edited.png")
@@ -135,29 +135,46 @@ def main():
     orig_labels = run_slic_like_notebook(orig_img_c)
     edit_labels = run_slic_like_notebook(edit_img_c)
 
-    # 5) boundaries on cropped
-    orig_bounds = find_boundaries(orig_labels, mode="inner")
-    edit_bounds = find_boundaries(edit_labels, mode="inner")
+    # 5) raw boundaries on cropped (keep a copy!)
+    orig_bounds_raw = find_boundaries(orig_labels, mode="inner")
+    edit_bounds_raw = find_boundaries(edit_labels, mode="inner")
 
-    # 6) transparency filtering on cropped
+    # 6) transparency filtering (pixel-level) on cropped
     if not args.keep_transparent:
         orig_touch_real = local_nontransparent(orig_alpha_c)
         edit_touch_real = local_nontransparent(edit_alpha_c)
-        orig_bounds &= orig_touch_real
-        edit_bounds &= edit_touch_real
+        orig_bounds = orig_bounds_raw & orig_touch_real
+        edit_bounds = edit_bounds_raw & edit_touch_real
+    else:
+        # keep everything
+        orig_bounds = orig_bounds_raw.copy()
+        edit_bounds = edit_bounds_raw.copy()
 
     # 7) thin on cropped
-    orig_bounds = thin_boundaries(orig_bounds, thickness=args.thickness)
-    edit_bounds = thin_boundaries(edit_bounds, thickness=args.thickness)
+    orig_bounds_thin = thin_boundaries(orig_bounds, thickness=args.thickness)
+    edit_bounds_thin = thin_boundaries(edit_bounds, thickness=args.thickness)
 
-    # 8) colorize CROPPED
-    out_cropped = boundaries_to_rgb(orig_bounds, edit_bounds)
+    # 8) NEW: ensure full borders for any label that has visible pixels
+    # find labels that actually contain nontransparent pixels
+    visible_orig_labels = np.unique(orig_labels[orig_alpha_c])
+    visible_edit_labels = np.unique(edit_labels[edit_alpha_c])
 
-    # 9) paste back into FULL-SIZE canvas
+    # for those labels, re-add their raw boundaries (pre-thinning) so edges aren't missing
+    orig_visible_mask = np.isin(orig_labels, visible_orig_labels)
+    edit_visible_mask = np.isin(edit_labels, visible_edit_labels)
+
+    # re-impose
+    orig_bounds_final = orig_bounds_thin | (orig_visible_mask & orig_bounds_raw)
+    edit_bounds_final = edit_bounds_thin | (edit_visible_mask & edit_bounds_raw)
+
+    # 9) colorize CROPPED
+    out_cropped = boundaries_to_rgb(orig_bounds_final, edit_bounds_final)
+
+    # 10) paste back to FULL SIZE
     full_out = np.zeros((H, W, 3), dtype=np.uint8)
     full_out[ymin:ymax, xmin:xmax, :] = out_cropped
 
-    # 10) save
+    # 11) save
     io.imsave(args.out, full_out)
     print(
         f"✅ Saved full-size boundary image to {os.path.abspath(args.out)} "
