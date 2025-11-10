@@ -43,9 +43,30 @@ def run_slic(img):
     )
 
 
+def trimmed_lab_deltaE_from_masks(orig_lab, edit_lab, mask, trim_ratio=0.05):
+    """
+    orig_lab, edit_lab: (H,W,3)
+    mask: (H,W) bool selecting pixels
+    returns scalar trimmed mean ΔE, or None if mask empty
+    """
+    idx = np.where(mask)
+    if idx[0].size == 0:
+        return None
+    ol = orig_lab[idx]
+    el = edit_lab[idx]
+    delta = np.linalg.norm(ol - el, axis=1)
+    delta_sorted = np.sort(delta)
+    k = int(len(delta_sorted) * trim_ratio)
+    if k > 0 and k < len(delta_sorted):
+        delta_trim = delta_sorted[:-k]
+    else:
+        delta_trim = delta_sorted
+    return float(delta_trim.mean())
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Region-based diff mask from superset superpixels (color-composition only)."
+        description="Region-based diff mask from superset superpixels, using micro-kernel trimmed Lab ΔE."
     )
     parser.add_argument("original", help="path to original.png")
     parser.add_argument("edited", help="path to edited.png")
@@ -54,25 +75,26 @@ def main():
         default="super_pixel_mask.png",
         help="output mask path (default: super_pixel_mask.png)",
     )
-    # ΔE threshold ~3-6 is noticeable; tune to your data
+    # micro-kernel settings
     parser.add_argument(
-        "--lab-thresh",
-        type=float,
-        default=4.5,
-        help="mean Lab ΔE threshold to mark region as changed (default: 4.5)",
+        "--kernel-size",
+        type=int,
+        default=9,
+        help="size of micro kernel (default: 9x9)",
     )
     parser.add_argument(
-        "--pix-diff",
+        "--kernel-trim",
         type=float,
-        default=0.06,
-        help="per-pixel RGB abs-diff considered 'changed' (0..1) (default: 0.06 ≈ 15/255)",
+        default=0.05,
+        help="fraction of highest-ΔE pixels in a kernel to drop before averaging (default: 0.05 = 5%)",
     )
     parser.add_argument(
-        "--pix-ratio",
+        "--kernel-thresh",
         type=float,
-        default=0.12,
-        help="if this fraction of valid pixels exceed --pix-diff, keep region (default: 0.12 = 12%)",
+        default=8.0,
+        help="trimmed Lab ΔE on a micro kernel above this → region is considered changed (default: 8.0)",
     )
+    # fallbacks / old params
     parser.add_argument(
         "--min-area",
         type=int,
@@ -84,6 +106,18 @@ def main():
         type=int,
         default=1,
         help="dilate union alpha by this many pixels to catch border regions (default: 1)",
+    )
+    parser.add_argument(
+        "--region-trim",
+        type=float,
+        default=0.05,
+        help="trim ratio for region-level fallback ΔE (default: 0.05)",
+    )
+    parser.add_argument(
+        "--region-thresh",
+        type=float,
+        default=6.0,
+        help="trimmed Lab ΔE at region level above this → keep (used as fallback, default: 6.0)",
     )
     args = parser.parse_args()
 
@@ -126,6 +160,8 @@ def main():
     # 6) build final mask (cropped)
     keep_mask_c = np.zeros((h_c, w_c), dtype=bool)
 
+    ks = args.kernel_size
+
     for region_id in range(1, n_regions + 1):
         region_pixels = (superset_labels == region_id)
         area = np.count_nonzero(region_pixels)
@@ -134,26 +170,61 @@ def main():
 
         # only evaluate where region intersects real content
         valid_pixels = region_pixels & union_alpha_c
-        valid_count = np.count_nonzero(valid_pixels)
-        if valid_count == 0:
-            # region is outside or transparent → skip
+        if not np.any(valid_pixels):
             continue
 
-        # color composition difference: mean ΔE
-        orig_lab_vals = orig_lab[valid_pixels]
-        edit_lab_vals = edit_lab[valid_pixels]
-        delta_lab = np.linalg.norm(orig_lab_vals - edit_lab_vals, axis=1)
-        mean_delta = float(delta_lab.mean())
+        # get bounding box of the region to limit kernel loops
+        ys, xs = np.where(region_pixels)
+        rymin, rymax = ys.min(), ys.max()
+        rxmin, rxmax = xs.min(), xs.max()
 
-        # also: what fraction of pixels changed a lot in plain RGB?
-        orig_rgb_vals = orig_c[valid_pixels]
-        edit_rgb_vals = edit_c[valid_pixels]
-        per_pix_diff = np.abs(orig_rgb_vals - edit_rgb_vals).mean(axis=1)  # (N,)
-        changed_ratio = float(np.count_nonzero(per_pix_diff >= args.pix_diff)) / valid_count
+        # track if ANY kernel inside this region is different
+        region_is_changed = False
 
-        # decide to keep
-        if (mean_delta >= args.lab_thresh) or (changed_ratio >= args.pix_ratio):
-            # fill WHOLE REGION, not just valid pixels
+        # slide kernels over the region bbox
+        for y0 in range(rymin, rymax + 1, ks):
+            if region_is_changed:
+                break
+            y1 = min(y0 + ks, h_c)
+            for x0 in range(rxmin, rxmax + 1, ks):
+                x1 = min(x0 + ks, w_c)
+
+                # kernel mask = this region AND this kernel AND content
+                kernel_mask = (
+                    region_pixels[y0:y1, x0:x1] & union_alpha_c[y0:y1, x0:x1]
+                )
+                if not np.any(kernel_mask):
+                    continue
+
+                # compute trimmed ΔE for this kernel
+                ol = orig_lab[y0:y1, x0:x1, :]
+                el = edit_lab[y0:y1, x0:x1, :]
+
+                idx = np.where(kernel_mask)
+                ol_sel = ol[idx]
+                el_sel = el[idx]
+                delta = np.linalg.norm(ol_sel - el_sel, axis=1)
+                delta_sorted = np.sort(delta)
+                ktrim = int(len(delta_sorted) * args.kernel_trim)
+                if ktrim > 0 and ktrim < len(delta_sorted):
+                    delta_trim = delta_sorted[:-ktrim]
+                else:
+                    delta_trim = delta_sorted
+                kernel_score = float(delta_trim.mean())
+
+                if kernel_score > args.kernel_thresh:
+                    region_is_changed = True
+                    break
+
+        # fallback: region-level trimmed ΔE (for tiny regions < kernel size)
+        if not region_is_changed:
+            region_score = trimmed_lab_deltaE_from_masks(
+                orig_lab, edit_lab, valid_pixels, trim_ratio=args.region_trim
+            )
+            if region_score is not None and region_score > args.region_thresh:
+                region_is_changed = True
+
+        if region_is_changed:
             keep_mask_c[region_pixels] = True
 
     # 7) paste back to full-size
