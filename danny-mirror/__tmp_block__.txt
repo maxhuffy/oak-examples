@@ -1,0 +1,9 @@
+            # Toggle on-screen 150mm ruler overlay
+            show_ruler = not show_ruler
+            print("Ruler (150mm):", "ON" if show_ruler else "OFF")
+        elif key == ord("b"):
+            # Toggle viewer band masking (keep only +/- VIEWER_BAND_TOL_MM around viewer depth)
+            depth_clip_enabled = not depth_clip_enabled
+            if not depth_clip_enabled:
+                viewer_band_target_z = None
+            print(f"Viewer band mask (±{VIEWER_BAND_TOL_MM}mm): {'ON' if depth_clip_enabled else 'OFF'}")

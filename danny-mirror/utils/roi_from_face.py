@@ -33,11 +33,20 @@ class ROIFromFace(dai.node.HostNode):
         if len(detections.detections) == 0:
             return
 
+        # FILTER: Only consider high-confidence detections (>75%) to avoid false positives
+        high_conf_detections = [
+            det for det in detections.detections 
+            if hasattr(det, 'confidence') and det.confidence >= 0.75
+        ]
+        
+        if len(high_conf_detections) == 0:
+            return  # No high-confidence faces, skip this frame
+
         # Pick the first detection (yunet is face-only). If multiple, pick the largest by area.
         def rect_area(det: ImgDetectionExtended) -> float:
             return det.rotated_rect.size.width * det.rotated_rect.size.height
 
-        best_det = max(detections.detections, key=rect_area)
+        best_det = max(high_conf_detections, key=rect_area)
 
         # Default to rotated-rect AABB in pixel space
         def rect_from_rotated_rect():

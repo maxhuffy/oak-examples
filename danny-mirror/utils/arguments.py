@@ -76,6 +76,69 @@ def initialize_argparser():
         action="store_true",
     )
 
+    # Display/monitor selection options
+    parser.add_argument(
+        "--display-index",
+        help="0-based monitor index from screeninfo.get_monitors().",
+        required=False,
+        default=None,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--monitor-name",
+        help="Substring to match monitor name/device when choosing display.",
+        required=False,
+        default=None,
+        type=str,
+    )
+
+    parser.add_argument(
+        "--prefer-portrait",
+        help="Prefer portrait monitors (height > width) when choosing display.",
+        required=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--windowed",
+        help="Do not force fullscreen; keep windowed mode.",
+        required=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--distance-scale-weight",
+        help="Weight of distance-based scaling (0 disables, 1 full).",
+        required=False,
+        default=0.3,
+        type=float,
+    )
+
+    parser.add_argument(
+        "--parallax-weight-x",
+        help="Weight for horizontal parallax based on eye X (mm→px).",
+        required=False,
+        default=1.0,
+        type=float,
+    )
+
+    parser.add_argument(
+        "--parallax-weight-y",
+        help="Weight for vertical parallax based on eye Y (mm→px).",
+        required=False,
+        default=1.0,
+        type=float,
+    )
+
+    parser.add_argument(
+        "--parallax-distance-scale",
+        help="Exponent for distance-based parallax scaling (1.0 increases parallax when closer).",
+        required=False,
+        default=1.0,
+        type=float,
+    )
+
     args = parser.parse_args()
 
     return parser, args
