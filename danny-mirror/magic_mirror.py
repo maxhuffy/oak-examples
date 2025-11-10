@@ -76,6 +76,11 @@ LIFE_SIZE_SCALE_MULTIPLIER = 1.55
 CAMERA_OFFSET_Y_MM = 0     # Camera position relative to EYE LINE (mm). +Y = camera above eyes
 CAMERA_OFFSET_X_MM = 0     # Camera position relative to EYE LINE (mm). +X = camera to your right
 
+# Parallax gain for camera-to-eye baseline compensation.
+# Based on your observation, doubling the effect aligns the image correctly.
+# This gain scales how CAMERA_OFFSET_* translates into pixel parallax.
+CAMERA_PARALLAX_GAIN = 2.0
+
 # Optional: Camera mount relative to DISPLAY CENTER (mm). +Y = camera above display center, +X = camera right of center
 # If you measure these and set them (or provide in calibration.json), the code will convert to pixels
 # and add as a static image offset automatically, so you don't have to hand-tune IMAGE_OFFSET_*.
@@ -93,6 +98,15 @@ VIEWER_BAND_TOL_MM = 200  # when enabled, keep only pixels within +/- this toler
 
 # Lateral follow configuration (viewer moves left/right)
 LATERAL_FOLLOW_GAIN = 1.0
+
+# Vertical follow configuration (viewer moves up/down)
+VERTICAL_FOLLOW_GAIN = 1.0
+
+# Alignment target (relative screen position)
+# X is fraction of width; Y is fraction of height from top.
+# Portrait mode: place target higher on the screen so it's over content.
+ALIGN_TARGET_X_REL = 0.5   # center horizontally
+ALIGN_TARGET_Y_REL = 0.25  # 25% from top ("75% up" from bottom)
 
 
  
@@ -134,6 +148,18 @@ try:
             # Load parallax exponent default if present
             if "parallax_distance_scale" in _cal:
                 PARALLAX_DISTANCE_EXP_DEFAULT = float(_cal["parallax_distance_scale"])  # type: ignore[assignment]
+            # Optional override for camera parallax gain
+            if "CAMERA_PARALLAX_GAIN" in _cal:
+                CAMERA_PARALLAX_GAIN = float(_cal["CAMERA_PARALLAX_GAIN"])  # type: ignore[name-defined]
+            # Optional alignment target overrides
+            if "ALIGN_TARGET_X_REL" in _cal:
+                ALIGN_TARGET_X_REL = float(_cal["ALIGN_TARGET_X_REL"])  # type: ignore[name-defined]
+            if "ALIGN_TARGET_Y_REL" in _cal:
+                ALIGN_TARGET_Y_REL = float(_cal["ALIGN_TARGET_Y_REL"])  # type: ignore[name-defined]
+            
+            # Optional gain for vertical follow
+            if "VERTICAL_FOLLOW_GAIN" in _cal:
+                VERTICAL_FOLLOW_GAIN = float(_cal["VERTICAL_FOLLOW_GAIN"])  # type: ignore[name-defined]
 except Exception:
     pass
 
@@ -410,11 +436,24 @@ with dai.Pipeline(device) as pipeline:
     last_face_center_cam = None  # (x,y) in camera coords (pre-flip)
     last_face_conf_seen = 0.0
     last_face_conf_time = 0.0
-    # Lateral follow state
+    # Lateral/Vertical follow state
     viewer_x_ema = None  # mm (legacy EMA, kept for reference)
     viewer_x_last_time = 0.0
     viewer_x_locked = None  # mm (last known good; sticky)
     viewer_x_locked_time = 0.0
+    viewer_y_locked = None  # mm (last known good; sticky)
+    viewer_y_locked_time = 0.0
+    # Layout cache for mapping camera coords -> display coords (used by auto alignment calib)
+    last_final_w = None
+    last_final_h = None
+    last_src_x_start = 0
+    last_src_y_start = 0
+    last_dst_x_start = 0
+    last_dst_y_start = 0
+    # Two-point baseline calibration state (solves CAMERA_OFFSET_X/Y_MM)
+    baseline_cal_mode = False
+    baseline_samples = []  # list of dicts with keys: z, dx, dy, p
+    baseline_prev_freeze = None
     show_depth_diag = False  # toggle to visualize ROI Z vs raw-face Z
     # Depth clip state (B toggle)
     depth_clip_enabled = False
@@ -726,15 +765,19 @@ with dai.Pipeline(device) as pipeline:
             # - At 1000mm (farther): offset halves (parallax effect weaker)
             
             # Start from static image offset plus static display-center-to-camera offset converted to pixels
-            static_disp_x = -float(DISPLAY_CAMERA_OFFSET_X_MM) * float(PIXELS_PER_MM)
-            static_disp_y = -float(DISPLAY_CAMERA_OFFSET_Y_MM) * float(PIXELS_PER_MM)
+            # Use axis-specific pixels-per-mm (portrait/landscape-safe)
+            ppmm_x_disp = float(DISPLAY_WIDTH) / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
+            ppmm_y_disp = float(DISPLAY_HEIGHT) / max(1e-6, float(DISPLAY_PHYSICAL_HEIGHT_MM))
+            static_disp_x = -float(DISPLAY_CAMERA_OFFSET_X_MM) * float(ppmm_x_disp)
+            static_disp_y = -float(DISPLAY_CAMERA_OFFSET_Y_MM) * float(ppmm_y_disp)
             target_offset_x = float(IMAGE_OFFSET_X) + static_disp_x
             target_offset_y = float(IMAGE_OFFSET_Y) + static_disp_y
             
             if last_valid_distance > 0:
-                # Dynamic parallax from calibrated camera-vs-eye baseline
-                base_y_px = -CAMERA_OFFSET_Y_MM * PIXELS_PER_MM
-                base_x_px = -CAMERA_OFFSET_X_MM * PIXELS_PER_MM
+                # Dynamic parallax from calibrated camera-vs-eye baseline (scaled by CAMERA_PARALLAX_GAIN)
+                # Use axis-specific px/mm to avoid anisotropy
+                base_y_px = -float(CAMERA_PARALLAX_GAIN) * float(CAMERA_OFFSET_Y_MM) * float(ppmm_y_disp)
+                base_x_px = -float(CAMERA_PARALLAX_GAIN) * float(CAMERA_OFFSET_X_MM) * float(ppmm_x_disp)
                 if freeze_scale:
                     parallax_scale = 0.0
                 else:
@@ -801,6 +844,45 @@ with dai.Pipeline(device) as pipeline:
                 except Exception:
                     pass
 
+                # Vertical follow using last-known-good position (sticky) with sanity gating
+                try:
+                    now_ts = time.time()
+                    ppmm_y_disp = float(DISPLAY_HEIGHT) / max(1e-6, float(DISPLAY_PHYSICAL_HEIGHT_MM))
+                    recent_face_ok = (last_face_conf_seen >= 0.8) and ((now_ts - float(last_face_conf_time)) <= 1.0)
+                    vy = None
+                    if not freeze_scale and distance_msg is not None and hasattr(distance_msg, "spatials"):
+                        _vy = float(getattr(distance_msg.spatials, "y", float("nan")))  # mm
+                        if np.isfinite(_vy):
+                            vy = _vy
+
+                    # Update the locked position only on recent, confident face + valid depth
+                    if recent_face_ok and (vy is not None):
+                        if viewer_y_locked is None:
+                            viewer_y_locked = vy
+                        else:
+                            # Deadband to ignore small jitters
+                            if abs(vy - viewer_y_locked) < 4.0:
+                                pass
+                            else:
+                                # Limit per-frame step to avoid jumps
+                                max_step_mm = 100.0
+                                delta = max(-max_step_mm, min(max_step_mm, vy - viewer_y_locked))
+                                viewer_y_locked += delta
+                        viewer_y_locked_time = now_ts
+
+                    # If we have a lock, use it; decay gently to center if stale
+                    if viewer_y_locked is not None:
+                        if (now_ts - viewer_y_locked_time) > 0.8:
+                            viewer_y_locked *= 0.98
+                            if abs(viewer_y_locked) < 1.0:
+                                viewer_y_locked = 0.0
+                        screen_shift_mm_y = 0.5 * float(viewer_y_locked) * float(VERTICAL_FOLLOW_GAIN)
+                        # Mirror view: align perceived motion. In practice, invert sign to match on-screen reflection.
+                        # Positive camera Y (viewer moves down) should shift image up in buffer coords.
+                        target_offset_y -= screen_shift_mm_y * ppmm_y_disp
+                except Exception:
+                    pass
+
             
             # Clamp target offsets to prevent extreme values
             MAX_OFFSET = DISPLAY_HEIGHT * 2
@@ -863,6 +945,14 @@ with dai.Pipeline(device) as pipeline:
             
             frame = output_frame
 
+            # Cache layout for auto alignment calibration
+            last_final_w = final_w
+            last_final_h = final_h
+            last_src_x_start = src_x_start
+            last_src_y_start = src_y_start
+            last_dst_x_start = dst_x_start
+            last_dst_y_start = dst_y_start
+
             # Optional on-screen ruler (150mm) for visual calibration
             if show_ruler:
                 try:
@@ -882,17 +972,17 @@ with dai.Pipeline(device) as pipeline:
                     bx2 = min(DISPLAY_WIDTH - 10, bx1 + box_w)
                     by2 = min(DISPLAY_HEIGHT - 10, by1 + box_h)
                     cv2.rectangle(overlay, (bx1, by1), (bx2, by2), (0, 0, 0), -1)
-                    # Horizontal ruler
+                    # Horizontal ruler (centered cross)
                     hx1 = cx - len_px_h // 2
                     hx2 = hx1 + len_px_h
-                    hy = cy - 40
+                    hy = cy
                     cv2.line(overlay, (hx1, hy), (hx2, hy), (0, 255, 255), 8)
                     for tx in (hx1, (hx1 + hx2) // 2, hx2):
                         cv2.line(overlay, (tx, hy - 20), (tx, hy + 20), (0, 255, 255), 6)
-                    # Vertical ruler
+                    # Vertical ruler (centered cross)
                     vy1 = cy - len_px_v // 2
                     vy2 = vy1 + len_px_v
-                    vx = cx + 40
+                    vx = cx
                     cv2.line(overlay, (vx, vy1), (vx, vy2), (0, 255, 255), 8)
                     for ty in (vy1, (vy1 + vy2) // 2, vy2):
                         cv2.line(overlay, (vx - 20, ty), (vx + 20, ty), (0, 255, 255), 6)
@@ -902,6 +992,22 @@ with dai.Pipeline(device) as pipeline:
                     cv2.putText(overlay, label, (vx + 30, vy1 + 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA)
                     # Blend overlay
                     cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+                except Exception:
+                    pass
+
+            # Alignment target overlay (for baseline two-point calibration)
+            if 'baseline_cal_mode' in locals() and baseline_cal_mode:
+                try:
+                    cx = int(round(DISPLAY_WIDTH * float(ALIGN_TARGET_X_REL)))
+                    cy = int(round(DISPLAY_HEIGHT * float(ALIGN_TARGET_Y_REL)))
+                    # Big bullseye + crosshair
+                    cv2.circle(frame, (cx, cy), 28, (0, 255, 0), 4)
+                    cv2.circle(frame, (cx, cy), 8, (0, 255, 0), -1)
+                    cv2.line(frame, (cx - 70, cy), (cx + 70, cy), (0, 255, 0), 3)
+                    cv2.line(frame, (cx, cy - 70), (cx, cy + 70), (0, 255, 0), 3)
+                    cv2.putText(frame, "BASELINE CAL: stand steady; press 1 to capture, move in/out, press 2 to capture",
+                                (max(10, cx - 620), min(DISPLAY_HEIGHT - 20, cy + 110)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
                 except Exception:
                     pass
 
@@ -1990,6 +2096,111 @@ with dai.Pipeline(device) as pipeline:
             IMAGE_OFFSET_X = 0
             IMAGE_OFFSET_Y = 0
             print("Image offsets reset to 0")
+        elif key == ord("v"):
+            # Toggle two-point baseline calibration (solves CAMERA_OFFSET_X/Y_MM)
+            try:
+                baseline_cal_mode = not baseline_cal_mode
+                if baseline_cal_mode:
+                    baseline_prev_freeze = freeze_scale
+                    freeze_scale = True
+                    baseline_samples = []
+                    print("Baseline calibration: Press 1 at first distance, then move closer/farther and press 2.")
+                else:
+                    # Exit and restore
+                    freeze_scale = baseline_prev_freeze if baseline_prev_freeze is not None else freeze_scale
+                    baseline_prev_freeze = None
+                    baseline_samples = []
+                    print("Baseline calibration cancelled")
+            except Exception as e:
+                print(f"Baseline calibration toggle error: {e}")
+        # Handle two-point baseline calibration captures
+        if baseline_cal_mode and (key == ord('1') or key == ord('2')):
+            try:
+                # Compute face position on display and depth z
+                cx_disp = None; cy_disp = None; z_val = None
+                if last_face_center_cam is not None and last_depth_raw is not None and orig_w > 0 and orig_h > 0:
+                    cx_cam, cy_cam = last_face_center_cam
+                    # Map to mirrored resized coords
+                    fx_mir = (orig_w - 1) - float(cx_cam)
+                    fy = float(cy_cam)
+                    if last_final_w and last_final_h:
+                        scale_x = float(last_final_w) / float(orig_w)
+                        scale_y = float(last_final_h) / float(orig_h)
+                        fx_res = int(round(fx_mir * scale_x))
+                        fy_res = int(round(fy * scale_y))
+                    else:
+                        fx_res = int(round(fx_mir))
+                        fy_res = int(round(fy))
+                    cx_disp = int(last_dst_x_start + (fx_res - last_src_x_start))
+                    cy_disp = int(last_dst_y_start + (fy_res - last_src_y_start))
+                    # Raw depth at face center (median window)
+                    dh, dw = last_depth_raw.shape[:2]
+                    sx = int(round(cx_cam * (dw / float(orig_w))))
+                    sy = int(round(cy_cam * (dh / float(orig_h))))
+                    r = 6
+                    x1s = max(0, sx - r); x2s = min(dw - 1, sx + r)
+                    y1s = max(0, sy - r); y2s = min(dh - 1, sy + r)
+                    win = last_depth_raw[y1s:y2s+1, x1s:x2s+1].astype(np.float32)
+                    valid = (win >= MIN_DISTANCE_MM) & (win <= MAX_DISTANCE_MM)
+                    if np.any(valid):
+                        z_val = float(np.median(win[valid]))
+                if cx_disp is None or cy_disp is None or z_val is None or z_val <= 0:
+                    print("Baseline capture failed: need face and valid depth")
+                else:
+                    target_x = int(round(DISPLAY_WIDTH * float(ALIGN_TARGET_X_REL)))
+                    target_y = int(round(DISPLAY_HEIGHT * float(ALIGN_TARGET_Y_REL)))
+                    dx = float(target_x - cx_disp)
+                    dy = float(target_y - cy_disp)
+                    # Compute p(z) with current exponent
+                    p = 1.0
+                    try:
+                        p = (float(REFERENCE_DISTANCE_MM) / float(z_val)) ** float(parallax_distance_exp_live)
+                    except Exception:
+                        p = float(REFERENCE_DISTANCE_MM) / max(1e-6, float(z_val))
+                    baseline_samples.append({"z": z_val, "dx": dx, "dy": dy, "p": p})
+                    print(f"Baseline sample {len(baseline_samples)}: z={z_val:.0f}mm, dx={dx:.1f}px, dy={dy:.1f}px, p={p:.3f}")
+                    if len(baseline_samples) >= 2:
+                        s1, s2 = baseline_samples[0], baseline_samples[1]
+                        dp = float(s1["p"]) - float(s2["p"])
+                        if abs(dp) < 1e-3:
+                            print("Baseline solve failed: move to a different distance before second capture")
+                        else:
+                            # Solve base_px for each axis from difference
+                            base_px_x = (float(s1["dx"]) - float(s2["dx"])) / dp
+                            base_px_y = (float(s1["dy"]) - float(s2["dy"])) / dp
+                            # Convert to CAMERA_OFFSET_MM (note: base_px = -GAIN * OFFSET_MM * ppmm)
+                            ppmm_x = float(DISPLAY_WIDTH) / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
+                            ppmm_y = float(DISPLAY_HEIGHT) / max(1e-6, float(DISPLAY_PHYSICAL_HEIGHT_MM))
+                            gain = float(CAMERA_PARALLAX_GAIN) if 'CAMERA_PARALLAX_GAIN' in globals() else 2.0
+                            try:
+                                off_x_mm = - base_px_x / max(1e-6, gain * ppmm_x)
+                                off_y_mm = - base_px_y / max(1e-6, gain * ppmm_y)
+                            except Exception:
+                                off_x_mm = 0.0; off_y_mm = 0.0
+                            CAMERA_OFFSET_X_MM = int(round(off_x_mm))
+                            CAMERA_OFFSET_Y_MM = int(round(off_y_mm))
+                            # Persist
+                            try:
+                                cal_path = os.path.join(os.path.dirname(__file__), "calibration.json")
+                                cal = {}
+                                if os.path.exists(cal_path):
+                                    with open(cal_path, "r", encoding="utf-8") as f:
+                                        cal = json.load(f) or {}
+                                cal["CAMERA_OFFSET_X_MM"] = int(CAMERA_OFFSET_X_MM)
+                                cal["CAMERA_OFFSET_Y_MM"] = int(CAMERA_OFFSET_Y_MM)
+                                with open(cal_path, "w", encoding="utf-8") as f:
+                                    json.dump(cal, f, indent=2)
+                            except Exception:
+                                pass
+                            print(f"Baseline solved: CAMERA_OFFSET_X_MM={CAMERA_OFFSET_X_MM}mm, Y={CAMERA_OFFSET_Y_MM}mm (from base_px_x={base_px_x:.1f}, base_px_y={base_px_y:.1f})")
+                            # Exit wizard
+                            baseline_cal_mode = False
+                            freeze_scale = baseline_prev_freeze if baseline_prev_freeze is not None else freeze_scale
+                            baseline_prev_freeze = None
+                            baseline_samples = []
+            except Exception as e:
+                print(f"Baseline capture error: {e}")
+
         elif key == ord("h"):
             # Show help
             print("\n=== CALIBRATION CONTROLS ===")
