@@ -1,0 +1,5 @@
+# Runtime dependencies for the full-overlay-pipeline
+# Pin scikit-image below 0.27 to keep morphology.square available (removed in 0.27)
+requests>=2.31.0
+numpy>=1.22
+scikit-image>=0.20,<0.27
