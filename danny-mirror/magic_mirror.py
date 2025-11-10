@@ -108,6 +108,9 @@ VERTICAL_FOLLOW_GAIN = 1.0
 ALIGN_TARGET_X_REL = 0.5   # center horizontally
 ALIGN_TARGET_Y_REL = 0.25  # 25% from top ("75% up" from bottom)
 
+# Static image overlay (black background + image at native resolution)
+STATIC_IMAGE_PATH = None  # Loaded from calibration.json or defaults to overlay.png in this folder
+
 
  
 
@@ -156,6 +159,19 @@ try:
                 ALIGN_TARGET_X_REL = float(_cal["ALIGN_TARGET_X_REL"])  # type: ignore[name-defined]
             if "ALIGN_TARGET_Y_REL" in _cal:
                 ALIGN_TARGET_Y_REL = float(_cal["ALIGN_TARGET_Y_REL"])  # type: ignore[name-defined]
+            if "STATIC_IMAGE_PATH" in _cal:
+                STATIC_IMAGE_PATH = str(_cal["STATIC_IMAGE_PATH"])  # type: ignore[name-defined]
+            # Optional still capture resolution (defaults to HD to avoid OOM)
+            if "STILL_CAPTURE_WIDTH" in _cal:
+                try:
+                    STILL_CAPTURE_WIDTH = int(_cal["STILL_CAPTURE_WIDTH"])  # type: ignore[name-defined]
+                except Exception:
+                    pass
+            if "STILL_CAPTURE_HEIGHT" in _cal:
+                try:
+                    STILL_CAPTURE_HEIGHT = int(_cal["STILL_CAPTURE_HEIGHT"])  # type: ignore[name-defined]
+                except Exception:
+                    pass
             
             # Optional gain for vertical follow
             if "VERTICAL_FOLLOW_GAIN" in _cal:
@@ -193,10 +209,30 @@ with dai.Pipeline(device) as pipeline:
         frame_type = (
             dai.ImgFrame.Type.BGR888p if platform == "RVC2" else dai.ImgFrame.Type.BGR888i
         )
+        # Use NV12 for stills to reduce on-device memory (significantly smaller than BGR)
+        still_type = dai.ImgFrame.Type.NV12
+        # Default HD still capture to avoid OOM. Can be overridden via calibration.json
+        try:
+            STILL_CAPTURE_WIDTH
+        except NameError:
+            STILL_CAPTURE_WIDTH = 1920
+        try:
+            STILL_CAPTURE_HEIGHT
+        except NameError:
+            STILL_CAPTURE_HEIGHT = 1440 
         input_node = color.requestOutput(
             VIDEO_RESOLUTION, frame_type, fps=args.fps_limit
         )
         use_camera = True
+        # Prepare high-resolution still output and control
+        try:
+            # Allocate a moderate still resolution to keep memory usage safe
+            color_still_out = color.requestOutput((STILL_CAPTURE_WIDTH, STILL_CAPTURE_HEIGHT), type=still_type)
+            cam_control_queue = color.inputControl.createInputQueue()
+            still_queue = color_still_out.createOutputQueue(maxSize=2, blocking=False)
+        except Exception:
+            cam_control_queue = None
+            still_queue = None
 
     # Load model from Zoo - use YuNet face detection (smaller, uses fewer shaves)
     model_description = dai.NNModelDescription(f"yunet_n_640x640.{platform}.yaml")
@@ -217,23 +253,24 @@ with dai.Pipeline(device) as pipeline:
     except Exception:
         pass
 
-    # Hint the runtime to use fewer SHAVEs if the blob default is too high for this pipeline
+    # Hint the runtime to use fewer SHAVEs so it fits with StereoDepth/ImageManip
+    # Previous value (7) exceeded the available SHAVEs in your current config.
     try:
-        nn_with_parser.setNNArchive(nn_archive, numShaves=7)
+        nn_with_parser.setNNArchive(nn_archive, numShaves=3)
     except Exception:
-        # If the API isn't available on this node version, we'll rely on resource allocation below
+        # If API not available, proceed; the runtime will allocate, but ensure the blob variant suits low shaves
         pass
 
     # Stereo depth for distance measurement
     monoLeft = (
         pipeline.create(dai.node.Camera)
         .build(dai.CameraBoardSocket.CAM_B)
-        .requestOutput((640, 400), type=dai.ImgFrame.Type.NV12)
+        .requestOutput((640, 400), type=dai.ImgFrame.Type.NV12, fps=args.fps_limit)
     )
     monoRight = (
         pipeline.create(dai.node.Camera)
         .build(dai.CameraBoardSocket.CAM_C)
-        .requestOutput((640, 400), type=dai.ImgFrame.Type.NV12)
+        .requestOutput((640, 400), type=dai.ImgFrame.Type.NV12, fps=args.fps_limit)
     )
 
     stereo = pipeline.create(dai.node.StereoDepth).build(
@@ -264,8 +301,9 @@ with dai.Pipeline(device) as pipeline:
     )
 
     # Auto-update ROI from face detections
+    # Feed ROIFromFace with raw disparity (lower latency than colorized disparity)
     roi_from_face = pipeline.create(ROIFromFace).build(
-        disparity_frames=depth_color_transform.out,
+        disparity_frames=stereo.disparity,
         parser_output=nn_with_parser.out,
         use_eye_roi=args.eye_roi,
     )
@@ -351,11 +389,11 @@ with dai.Pipeline(device) as pipeline:
     
     # Enhanced smoothing for scale changes (avoid jitter)
     current_scale = 1.0
-    SMOOTHING_FACTOR = 0.15  # Even faster response to recover from bad readings
+    SMOOTHING_FACTOR = 0.25  # Faster response so scale doesn't feel stuck
     
     # Moving average filter for depth - reduced for faster response
     from collections import deque
-    depth_history = deque(maxlen=5)  # Keep only last 3 readings for faster response
+    depth_history = deque(maxlen=3)  # Short buffer for fast response
 
     # Robust median history for outlier rejection
     z_median_history = deque(maxlen=15)
@@ -363,7 +401,7 @@ with dai.Pipeline(device) as pipeline:
     Z_OUTLIER_RATIO = 1.25
     # Keep track of last valid distance - start at reference so image stays at 1.0 scale initially
     # Relative deadband to ignore tiny scale changes
-    SCALE_DEADBAND_REL = 0.02
+    SCALE_DEADBAND_REL = 0.005  # Smaller deadband so small changes are not ignored
     # Only allow decreases when large and sustained
     DECREASE_HYSTERESIS_REL = 0.04
     DECREASE_HYSTERESIS_FRAMES = 3
@@ -374,7 +412,7 @@ with dai.Pipeline(device) as pipeline:
     # Smooth position offsets to prevent jitter
     current_offset_x = 0.0
     current_offset_y = 0.0
-    OFFSET_SMOOTHING = 0.3  # Faster response
+    OFFSET_SMOOTHING = 0.5  # Faster response to position changes
     
     # Store recent detections for visualization (lingering circles)
     from collections import deque
@@ -450,11 +488,43 @@ with dai.Pipeline(device) as pipeline:
     last_src_y_start = 0
     last_dst_x_start = 0
     last_dst_y_start = 0
+    # Static image overlay state
+    show_static_image = False
+    static_image = None
+    use_static_as_source = False
+    # Latest raw color frame from camera (unmirrored, unscaled) for capture hotkey
+    last_color_raw_frame = None
+    # One-shot still request (teardown + temporary pipeline)
+    one_shot_still_request = False
+    # Resolve and sanity-check static image path early (avoid OpenCV warnings)
+    try:
+        base_dir = os.path.dirname(__file__)
+        path = STATIC_IMAGE_PATH if STATIC_IMAGE_PATH else "overlay.png"
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(base_dir, path)
+        # If target doesn't exist, try to pick the first common image in the folder
+        if not os.path.exists(path):
+            exts = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+            try:
+                for fname in os.listdir(base_dir):
+                    if fname.lower().endswith(exts):
+                        cand = os.path.join(base_dir, fname)
+                        if os.path.isfile(cand):
+                            path = cand
+                            print(f"Static image not found; defaulting to {fname}")
+                            break
+            except Exception:
+                pass
+        STATIC_IMAGE_PATH = path
+    except Exception:
+        pass
     # Two-point baseline calibration state (solves CAMERA_OFFSET_X/Y_MM)
     baseline_cal_mode = False
     baseline_samples = []  # list of dicts with keys: z, dx, dy, p
     baseline_prev_freeze = None
     show_depth_diag = False  # toggle to visualize ROI Z vs raw-face Z
+    roi_z_latest = None      # latest raw ROI Z from distance_msg (no smoothing)
     # Depth clip state (B toggle)
     depth_clip_enabled = False
     viewer_band_target_z = None
@@ -486,12 +556,12 @@ with dai.Pipeline(device) as pipeline:
             # Store detection info for lingering visualization
             for detection in det_msg.detections:
                 try:
-                    # Filter by confidence - only keep high-confidence detections (>75%)
+                    # Filter by confidence - accept moderately strong detections to keep RawFace updates flowing
                     confidence = detection.confidence if hasattr(detection, 'confidence') else 1.0
                     if confidence > last_face_conf_max:
                         last_face_conf_max = float(confidence)
-                    if confidence < 0.75:
-                        continue  # Skip low-confidence detections (false positives)
+                    if confidence < 0.65:
+                        continue  # Skip obviously low-confidence detections
                     
                     # YuNet returns keypoints (eyes, nose, mouth corners) instead of bbox
                     if hasattr(detection, 'keypoints') and len(detection.keypoints) > 0:
@@ -520,7 +590,7 @@ with dai.Pipeline(device) as pipeline:
                         last_face_center_cam = (int(round(center_x)), int(round(center_y)))
                         # Persist last confident face time (>=0.8) for Y hotkey gating
                         try:
-                            if float(confidence) >= 0.8:
+                            if float(confidence) >= 0.7:
                                 last_face_conf_seen = float(confidence)
                                 last_face_conf_time = time.time()
                         except Exception:
@@ -538,9 +608,43 @@ with dai.Pipeline(device) as pipeline:
                     pass
                     pass
         
-        if video_msg is not None:
-            # Convert to OpenCV format
-            frame = video_msg.getCvFrame()
+        if (video_msg is not None) or ('use_static_as_source' in locals() and use_static_as_source):
+            # Select source frame: camera or static image
+            if 'use_static_as_source' in locals() and use_static_as_source:
+                # Lazy-load static image
+                try:
+                    if static_image is None:
+                        path = STATIC_IMAGE_PATH
+                        path = os.path.expanduser(path) if path else os.path.join(os.path.dirname(__file__), "overlay.png")
+                        if not os.path.isabs(path):
+                            path = os.path.join(os.path.dirname(__file__), path)
+                        if not os.path.exists(path):
+                            raise FileNotFoundError(f"Static image not found at {path}")
+                        img = cv2.imread(path, cv2.IMREAD_COLOR)
+                        if img is None:
+                            raise FileNotFoundError(f"Failed to load image at {path}")
+                        static_image = img
+                    frame = static_image.copy()
+                except Exception as e:
+                    # Fallback to camera if available
+                    if video_msg is None:
+                        # No camera frame; skip this loop
+                        continue
+                    frame = video_msg.getCvFrame()
+                    cv2.putText(frame, f"Static source error: {e}", (20,40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2, cv2.LINE_AA)
+            else:
+                # Convert to OpenCV format and store raw for capture
+                frame = video_msg.getCvFrame()
+                try:
+                    # Track latest ROI Z directly from device spatials if present in the same loop
+                    if distance_msg is not None and hasattr(distance_msg, 'spatials') and float(distance_msg.spatials.z) > 0:
+                        roi_z_latest = float(distance_msg.spatials.z)
+                except Exception:
+                    pass
+                try:
+                    last_color_raw_frame = frame.copy()
+                except Exception:
+                    last_color_raw_frame = frame
             # Reset per-frame diagnostics
             z_face_raw = None
             # Update latest raw depth frame for host-side sampling
@@ -552,15 +656,30 @@ with dai.Pipeline(device) as pipeline:
                 pass
             
             # Camera is landscape orientation (correct for face detection)
-            # Apply horizontal flip for mirror effect
+            # Apply horizontal flip for mirror effect (also flips static source to reflection)
             frame = cv2.flip(frame, 1)
             
             # Get original frame dimensions (640w x 480h landscape)
             orig_h, orig_w = frame.shape[:2]
+            # When using a static image as source, force canonical camera dimensions
+            # so base_scale and all mirror math match the live camera path.
+            try:
+                if 'use_static_as_source' in locals() and use_static_as_source:
+                    # VIDEO_RESOLUTION is (width, height)
+                    orig_w = int(VIDEO_RESOLUTION[0])
+                    orig_h = int(VIDEO_RESOLUTION[1])
+            except Exception:
+                pass
 
             # Compute raw-face depth (median around last face center in raw depth)
             try:
-                if last_face_center_cam is not None and last_depth_raw is not None and orig_w > 0 and orig_h > 0:
+                # Require a recent, confident face before sampling RawFace Z to avoid stale points
+                recent_face_for_z = False
+                try:
+                    recent_face_for_z = (last_face_conf_seen >= 0.7) and ((time.time() - float(last_face_conf_time)) <= 1.5)
+                except Exception:
+                    recent_face_for_z = False
+                if recent_face_for_z and last_face_center_cam is not None and last_depth_raw is not None and orig_w > 0 and orig_h > 0:
                     cx_cam, cy_cam = last_face_center_cam
                     dh, dw = last_depth_raw.shape[:2]
                     scale_x = dw / float(orig_w)
@@ -582,13 +701,10 @@ with dai.Pipeline(device) as pipeline:
             # Calculate scale based on depth FIRST (before any resizing)
             target_scale = current_scale  # Default to current scale
             
-            if (z_face_raw is not None and z_face_raw > 0 and not np.isnan(z_face_raw)) or (distance_msg is not None):
-                if z_face_raw is not None and z_face_raw > 0 and not np.isnan(z_face_raw):
-                    z_mm = float(z_face_raw)
-                    z_raw_for_print = z_mm
-                else:
-                    z_mm = distance_msg.spatials.z
-                    z_raw_for_print = z_mm
+            # Use ONLY RawFace depth for scaling. Never use ROI/device spatials as fallback.
+            if (z_face_raw is not None and z_face_raw > 0 and not np.isnan(z_face_raw)):
+                z_mm = float(z_face_raw)
+                z_raw_for_print = z_mm
                 # Track centroid for mapping seed (in depth/camera space 640x480, pre-flip)
                 
                 
@@ -596,20 +712,35 @@ with dai.Pipeline(device) as pipeline:
                 if z_mm > 0 and not np.isnan(z_mm):
                     # Robust outlier rejection using running median
                     candidate_z = float(z_mm)
-                    if len(z_median_history) > 3:
-                        med = float(np.median(z_median_history))
-                        if med > 0:
-                            if abs(candidate_z - med) > Z_OUTLIER_MM or (candidate_z > med * Z_OUTLIER_RATIO or candidate_z < med / Z_OUTLIER_RATIO):
-                                candidate_z = med
-                    z_median_history.append(candidate_z)
-                    depth_history.append(candidate_z)
-                    z_mm = sum(depth_history) / len(depth_history)
+                    # Only treat measurements >4000mm as outliers to ignore; otherwise accept jumps
+                    try:
+                        lv = float(last_valid_distance) if last_valid_distance else None
+                    except Exception:
+                        lv = None
+                    if candidate_z > 4000.0 and lv is not None:
+                        # Ignore this spike; keep previous used value
+                        z_mm = lv
+                    else:
+                        # Accept jump immediately: reset short smoother and use new value
+                        depth_history.clear()
+                        depth_history.append(candidate_z)
+                        z_mm = candidate_z
                     
                     # Clamp distance to reasonable range
                     z_mm = max(MIN_DISTANCE_MM, min(MAX_DISTANCE_MM, z_mm))
-                    # Record latest raw/clamped values for overlays (for both fixed/manual ROI)
-                    last_raw_z = z_raw_for_print
-                    last_clamped_z = z_mm
+                    # Record values for overlays
+                    # last_raw_z: prefer raw-face if available; else ROI z from device
+                    if z_face_raw is not None and not np.isnan(z_face_raw):
+                        last_raw_z = float(z_face_raw)
+                    elif roi_z_latest is not None:
+                        last_raw_z = float(roi_z_latest)
+                    else:
+                        last_raw_z = float(z_mm)
+                    # last_clamped_z is used for displaying ROI Z specifically
+                    if roi_z_latest is not None:
+                        last_clamped_z = float(roi_z_latest)
+                    else:
+                        last_clamped_z = None
                     
                     # Update last valid distance
                     last_valid_distance = z_mm
@@ -628,10 +759,10 @@ with dai.Pipeline(device) as pipeline:
                         # Clamp scale to prevent extreme values
                         target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
                         if target_scale > current_scale:
-                            max_step_up = 0.03
+                            max_step_up = 0.05
                             target_scale = min(current_scale + max_step_up, target_scale)
                         else:
-                            max_step_down = 0.02
+                            max_step_down = 0.05
                             target_scale = max(current_scale - max_step_down, target_scale)
 
                     # Print raw vs smoothed depth when fixed ROI mode is active (sanity check)
@@ -650,9 +781,7 @@ with dai.Pipeline(device) as pipeline:
                             last_fixed_roi_print_time = now_ts
                             last_raw_z = z_raw_for_print
                             last_clamped_z = z_mm
-                    else:
-                        # Scale frozen at 1.0 for calibration
-                        target_scale = 1.0
+                    # No special handling here; freeze behavior is already applied above.
                 else:
                     # Invalid depth, use last known distance
                     frames_without_detection += 1
@@ -667,10 +796,10 @@ with dai.Pipeline(device) as pipeline:
                                 target_scale = r
                             target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
                         if target_scale > current_scale:
-                            max_step_up = 0.03
+                            max_step_up = 0.05
                             target_scale = min(current_scale + max_step_up, target_scale)
                         else:
-                            max_step_down = 0.02
+                            max_step_down = 0.05
                             target_scale = max(current_scale - max_step_down, target_scale)
                         if freeze_scale:
                             target_scale = 1.0
@@ -688,10 +817,10 @@ with dai.Pipeline(device) as pipeline:
                             target_scale = r
                         target_scale = max(MIN_SCALE, min(MAX_SCALE, float(target_scale)))
                         if target_scale > current_scale:
-                            max_step_up = 0.03
+                            max_step_up = 0.05
                             target_scale = min(current_scale + max_step_up, target_scale)
                         else:
-                            max_step_down = 0.02
+                            max_step_down = 0.05
                             target_scale = max(current_scale - max_step_down, target_scale)
                     else:
                         target_scale = 1.0
@@ -704,15 +833,9 @@ with dai.Pipeline(device) as pipeline:
             if rel < SCALE_DEADBAND_REL:
                 target_scale = current_scale
 
-            if target_scale < current_scale:
-                rel_dec = (current_scale - target_scale) / max(current_scale, 1e-6)
-                if rel_dec >= DECREASE_HYSTERESIS_REL:
-                    decrease_pending_frames += 1
-                else:
-                    decrease_pending_frames = 0
-                if decrease_pending_frames < DECREASE_HYSTERESIS_FRAMES:
-                    target_scale = current_scale
-            else:
+            # Allow decreases immediately (no asymmetric hysteresis), but step-limited below.
+            # This prevents the scale from getting "stuck" high when you move farther.
+            if target_scale >= current_scale:
                 decrease_pending_frames = 0
 
             # Smooth the scale transition
@@ -808,7 +931,8 @@ with dai.Pipeline(device) as pipeline:
                 try:
                     now_ts = time.time()
                     ppmm_x_disp = float(DISPLAY_WIDTH) / max(1e-6, float(DISPLAY_PHYSICAL_WIDTH_MM))
-                    recent_face_ok = (last_face_conf_seen >= 0.8) and ((now_ts - float(last_face_conf_time)) <= 1.0)
+                    # Extend hold window so brief dropouts don't cause recenter
+                    recent_face_ok = (last_face_conf_seen >= 0.7) and ((now_ts - float(last_face_conf_time)) <= 2.0)
                     vx = None
                     if not freeze_scale and distance_msg is not None and hasattr(distance_msg, "spatials"):
                         _vx = float(getattr(distance_msg.spatials, "x", float("nan")))  # mm
@@ -821,26 +945,28 @@ with dai.Pipeline(device) as pipeline:
                             viewer_x_locked = vx
                         else:
                             # Deadband to ignore small jitters
-                            if abs(vx - viewer_x_locked) < 4.0:
+                            if abs(vx - viewer_x_locked) < 3.0:
                                 pass
                             else:
-                                # Limit per-frame step to avoid jumps
-                                max_step_mm = 100.0
+                                # Limit per-frame step to avoid jumps (more responsive laterally)
+                                max_step_mm = 200.0
                                 delta = max(-max_step_mm, min(max_step_mm, vx - viewer_x_locked))
                                 viewer_x_locked += delta
                         viewer_x_locked_time = now_ts
 
-                    # If we have a lock, use it; decay gently to center if stale
+                    # If we have a lock, decay state; only apply when not frozen
                     if viewer_x_locked is not None:
-                        if (now_ts - viewer_x_locked_time) > 0.8:
+                        # Delay decay significantly to avoid snapping back toward center
+                        if (now_ts - viewer_x_locked_time) > 2.5:
                             viewer_x_locked *= 0.98
                             # Snap to zero if extremely small to avoid drift
                             if abs(viewer_x_locked) < 1.0:
                                 viewer_x_locked = 0.0
-                        screen_shift_mm = 0.5 * float(viewer_x_locked) * float(LATERAL_FOLLOW_GAIN)
-                        # Flip sign because the display feed is mirrored (cv2.flip(...,1))
-                        # Positive camera X (viewer moves right) should shift image left in buffer coords
-                        target_offset_x -= screen_shift_mm * ppmm_x_disp
+                        if not freeze_scale:
+                            screen_shift_mm = 0.5 * float(viewer_x_locked) * float(LATERAL_FOLLOW_GAIN)
+                            # Flip sign because the display feed is mirrored (cv2.flip(...,1))
+                            # Positive camera X (viewer moves right) should shift image left in buffer coords
+                            target_offset_x -= screen_shift_mm * ppmm_x_disp
                 except Exception:
                     pass
 
@@ -848,7 +974,8 @@ with dai.Pipeline(device) as pipeline:
                 try:
                     now_ts = time.time()
                     ppmm_y_disp = float(DISPLAY_HEIGHT) / max(1e-6, float(DISPLAY_PHYSICAL_HEIGHT_MM))
-                    recent_face_ok = (last_face_conf_seen >= 0.8) and ((now_ts - float(last_face_conf_time)) <= 1.0)
+                    # Extend hold window so brief dropouts don't cause recenter
+                    recent_face_ok = (last_face_conf_seen >= 0.7) and ((now_ts - float(last_face_conf_time)) <= 2.0)
                     vy = None
                     if not freeze_scale and distance_msg is not None and hasattr(distance_msg, "spatials"):
                         _vy = float(getattr(distance_msg.spatials, "y", float("nan")))  # mm
@@ -861,25 +988,27 @@ with dai.Pipeline(device) as pipeline:
                             viewer_y_locked = vy
                         else:
                             # Deadband to ignore small jitters
-                            if abs(vy - viewer_y_locked) < 4.0:
+                            if abs(vy - viewer_y_locked) < 3.0:
                                 pass
                             else:
-                                # Limit per-frame step to avoid jumps
+                                # Limit per-frame step to avoid jumps (keep vertical moderate)
                                 max_step_mm = 100.0
                                 delta = max(-max_step_mm, min(max_step_mm, vy - viewer_y_locked))
                                 viewer_y_locked += delta
                         viewer_y_locked_time = now_ts
 
-                    # If we have a lock, use it; decay gently to center if stale
+                    # If we have a lock, decay state; only apply when not frozen
                     if viewer_y_locked is not None:
-                        if (now_ts - viewer_y_locked_time) > 0.8:
+                        # Delay decay significantly to avoid snapping back toward center
+                        if (now_ts - viewer_y_locked_time) > 2.5:
                             viewer_y_locked *= 0.98
                             if abs(viewer_y_locked) < 1.0:
                                 viewer_y_locked = 0.0
-                        screen_shift_mm_y = 0.5 * float(viewer_y_locked) * float(VERTICAL_FOLLOW_GAIN)
-                        # Mirror view: align perceived motion. In practice, invert sign to match on-screen reflection.
-                        # Positive camera Y (viewer moves down) should shift image up in buffer coords.
-                        target_offset_y -= screen_shift_mm_y * ppmm_y_disp
+                        if not freeze_scale:
+                            screen_shift_mm_y = 0.5 * float(viewer_y_locked) * float(VERTICAL_FOLLOW_GAIN)
+                            # Mirror view: align perceived motion. In practice, invert sign to match on-screen reflection.
+                            # Positive camera Y (viewer moves down) should shift image up in buffer coords.
+                            target_offset_y -= screen_shift_mm_y * ppmm_y_disp
                 except Exception:
                     pass
 
@@ -952,6 +1081,46 @@ with dai.Pipeline(device) as pipeline:
             last_src_y_start = src_y_start
             last_dst_x_start = dst_x_start
             last_dst_y_start = dst_y_start
+
+            # Static image overlay mode: replace camera feed with black + image at native resolution (centered)
+            if show_static_image:
+                try:
+                    canvas = np.zeros((DISPLAY_HEIGHT, DISPLAY_WIDTH, 3), dtype=np.uint8)
+                    # Lazy-load image
+                    if static_image is None:
+                        path = STATIC_IMAGE_PATH
+                        # Resolve and verify path before attempting to read to avoid OpenCV warnings
+                        path = os.path.expanduser(path) if path else os.path.join(os.path.dirname(__file__), "overlay.png")
+                        if not os.path.isabs(path):
+                            path = os.path.join(os.path.dirname(__file__), path)
+                        if not os.path.exists(path):
+                            raise FileNotFoundError(f"Static image not found at {path}")
+                        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                        if img is None:
+                            raise FileNotFoundError(f"Failed to load image at {path}")
+                        static_image = img
+                    img = static_image
+                    ih, iw = img.shape[:2]
+                    px = (DISPLAY_WIDTH - iw) // 2
+                    py = (DISPLAY_HEIGHT - ih) // 2
+                    # Compute paste region with clipping
+                    x1 = max(0, px); y1 = max(0, py)
+                    x2 = min(DISPLAY_WIDTH, px + iw); y2 = min(DISPLAY_HEIGHT, py + ih)
+                    if x2 > x1 and y2 > y1:
+                        sx1 = x1 - px; sy1 = y1 - py; sx2 = sx1 + (x2 - x1); sy2 = sy1 + (y2 - y1)
+                        roi = canvas[y1:y2, x1:x2]
+                        patch = img[sy1:sy2, sx1:sx2]
+                        if patch.shape[2] == 4:
+                            # Alpha blend
+                            alpha = (patch[:, :, 3:4].astype(np.float32)) / 255.0
+                            rgb = patch[:, :, :3].astype(np.uint8)
+                            roi[:] = (alpha * rgb + (1.0 - alpha) * roi).astype(np.uint8)
+                        else:
+                            roi[:] = patch
+                    frame = canvas
+                except Exception as e:
+                    # If any error, keep previous frame but report once
+                    cv2.putText(frame, f"Static image error: {e}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2, cv2.LINE_AA)
 
             # Optional on-screen ruler (150mm) for visual calibration
             if show_ruler:
@@ -1152,14 +1321,39 @@ with dai.Pipeline(device) as pipeline:
             except Exception:
                 pass
 
-            # Optional depth diagnostics overlay (big, centered like 'y' readout)
+            # Optional depth/scale diagnostics overlay (big, centered near top)
             if show_depth_diag:
                 try:
                     lines = []
+                    # Depth sources
                     if last_clamped_z is not None:
                         lines.append(f"ROI Z: {last_clamped_z:.0f} mm")
                     if z_face_raw is not None:
                         lines.append(f"RawFace Z: {z_face_raw:.0f} mm")
+                    # Scale math readouts (used for scaling)
+                    try:
+                        z_used = float(last_valid_distance) if last_valid_distance else float('nan')
+                    except Exception:
+                        z_used = float('nan')
+                    if z_used and z_used > 0 and z_used == z_used:  # finite
+                        lines.append(f"USED Z: {z_used:.0f} mm")
+                        try:
+                            r_used = float(REFERENCE_DISTANCE_MM) / float(z_used)
+                        except Exception:
+                            r_used = float('nan')
+                    else:
+                        r_used = float('nan')
+                    lines.append(f"REF: {REFERENCE_DISTANCE_MM} mm")
+                    if r_used == r_used:
+                        lines.append(f"r = ref/z: {r_used:.3f}")
+                    # Current, base and combined scale
+                    try:
+                        comb = float(base_scale) * float(current_scale)
+                    except Exception:
+                        comb = float('nan')
+                    lines.append(f"current: {current_scale:.3f}  base: {base_scale:.3f}")
+                    if comb == comb:
+                        lines.append(f"combined: {comb:.3f}")
                     if lines:
                         font = cv2.FONT_HERSHEY_SIMPLEX
                         scale = 2.6
@@ -1375,6 +1569,12 @@ with dai.Pipeline(device) as pipeline:
                 fps_counter = 0
                 fps_start_time = time.time()
             
+            # Show freeze indicator prominently when active
+            if freeze_scale:
+                try:
+                    cv2.putText(frame, "FREEZE ON", (DISPLAY_WIDTH//2 - 200, 120), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 0, 255), 6)
+                except Exception:
+                    pass
             cv2.putText(frame, f"FPS: {current_fps:.1f}", (DISPLAY_WIDTH - 120, 30),
                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
@@ -1724,8 +1924,8 @@ with dai.Pipeline(device) as pipeline:
                 print("Press 'z' again to re-enable scaling")
             else:
                 print("*** Scale unfrozen - distance-based scaling enabled ***")
-        elif key == ord("d"):
-            # Toggle depth inset overlay
+        elif key == ord("D"):
+            # Toggle depth inset overlay (moved to Shift+D to avoid conflict with 'd' move-right)
             show_depth_inset = not show_depth_inset
             print("Depth inset: " + ("ON" if show_depth_inset else "OFF"))
         elif key == ord("f"):
@@ -1817,6 +2017,65 @@ with dai.Pipeline(device) as pipeline:
                 filename = f"mirror_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
+        elif key == ord("C"):
+            # Capture a full-color picture from the OAK-D Lite color camera and save to this folder
+            try:
+                if 'last_color_raw_frame' in locals() and last_color_raw_frame is not None:
+                    raw = last_color_raw_frame  # last unmirrored, unscaled BGR frame
+                    save_path = os.path.join(os.path.dirname(__file__), "camera_picture.png")
+                    ok = cv2.imwrite(save_path, raw)
+                    if ok:
+                        h, w = raw.shape[:2]
+                        print(f"Camera picture saved: {save_path} ({w}x{h})")
+                    else:
+                        print("Failed to write camera_picture.png")
+                else:
+                    print("No camera frame available to capture.")
+            except Exception as e:
+                print(f"Camera picture save error: {e}")
+        elif key == ord("S"):
+            # In-pipeline still capture (HD NV12 -> PNG, not mirrored)
+            try:
+                if not use_camera:
+                    print("High-res still not available: running from media file.")
+                elif 'cam_control_queue' in locals() and cam_control_queue is not None and 'still_queue' in locals() and still_queue is not None:
+                    ctrl = dai.CameraControl(); ctrl.setCaptureStill(True)
+                    cam_control_queue.send(ctrl)
+                    # Drain any old still frames
+                    try:
+                        while still_queue.tryGet() is not None:
+                            pass
+                    except Exception:
+                        pass
+                    # Wait for the still image
+                    deadline = time.time() + 3.0
+                    still_msg = None
+                    while time.time() < deadline:
+                        still_msg = still_queue.tryGet()
+                        if still_msg is not None:
+                            break
+                        time.sleep(0.01)
+                    if still_msg is None:
+                        print("Timeout waiting for still image.")
+                    else:
+                        nv12 = still_msg.getCvFrame()
+                        try:
+                            hh = int(still_msg.getHeight()); ww = int(still_msg.getWidth())
+                            if nv12.ndim == 2 and nv12.shape[0] == hh * 3 // 2 and nv12.shape[1] == ww:
+                                bgr = cv2.cvtColor(nv12, cv2.COLOR_YUV2BGR_NV12)
+                            else:
+                                bgr = nv12
+                        except Exception:
+                            bgr = nv12
+                        save_path = os.path.join(os.path.dirname(__file__), "highres_camera_capture.png")
+                        if cv2.imwrite(save_path, bgr):
+                            print(f"High-res still saved: {save_path} ({bgr.shape[1]}x{bgr.shape[0]})")
+                        else:
+                            print("Failed to write highres_camera_capture.png")
+                else:
+                    print("High-res still not available: still/control queues not initialized.")
+            except Exception as e:
+                print(f"High-res still capture error: {e}")
         elif key == ord("t"):
             # Toggle depth diagnostics overlay (ROI vs raw-face depth)
             show_depth_diag = not show_depth_diag
@@ -2096,6 +2355,22 @@ with dai.Pipeline(device) as pipeline:
             IMAGE_OFFSET_X = 0
             IMAGE_OFFSET_Y = 0
             print("Image offsets reset to 0")
+        elif key == ord("k"):
+            # Toggle static image overlay
+            show_static_image = not show_static_image
+            if show_static_image:
+                static_image = None  # force reload on next frame
+                print(f"Static image mode ON (path: {STATIC_IMAGE_PATH}) — camera feed hidden")
+            else:
+                print("Static image mode OFF — camera feed visible")
+        elif key == ord("j"):
+            # Toggle static image as source (processed with full mirror pipeline)
+            use_static_as_source = not use_static_as_source
+            if use_static_as_source:
+                static_image = None  # force reload
+                print(f"Static image as SOURCE ON (path: {STATIC_IMAGE_PATH}) - processed like camera feed; dynamic scale + follow enabled")
+            else:
+                print("Static image as SOURCE OFF - camera feed used")
         elif key == ord("v"):
             # Toggle two-point baseline calibration (solves CAMERA_OFFSET_X/Y_MM)
             try:
@@ -2213,6 +2488,7 @@ with dai.Pipeline(device) as pipeline:
             print("I: Multi-depth calibration (O capture, ENTER solve, BACKSPACE undo)")
             print("G: Auto-calibrate 150mm (click two points)")
             print("P: Save screenshot")
+            print("S: Save high-res still (PNG, not mirrored)")
             print("Q: Quit (and show final values)")
             print("H: Show this help")
             print("===========================\n")
@@ -2224,17 +2500,7 @@ with dai.Pipeline(device) as pipeline:
     print(f"  IMAGE_OFFSET_Y = {IMAGE_OFFSET_Y}")
     print(f"  REFERENCE_DISTANCE_MM = {REFERENCE_DISTANCE_MM}")
 
-
-
-    # Throttled console prints for fixed ROI depth sanity check
-    last_fixed_roi_print_z = None
-    last_fixed_roi_print_time = 0.0
-    last_raw_z = None
-    last_clamped_z = None
-
-
-
-
+    # End of program
 
 
 
