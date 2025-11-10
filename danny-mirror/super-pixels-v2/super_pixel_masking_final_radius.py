@@ -36,7 +36,7 @@ def get_union_bbox(alpha1, alpha2):
 def run_slic(img):
     return slic(
         img,
-        n_segments=2200,
+        n_segments=700,
         compactness=20,
         sigma=0,
         start_label=1,
@@ -70,22 +70,31 @@ def color_erosion(img, radius=1):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Region-based diff mask from superset superpixels with pre-erosion smoothing."
+        description="Neighborhood-aware region diff mask from superset superpixels."
     )
     parser.add_argument("original", help="path to original.png")
     parser.add_argument("edited", help="path to edited.png")
     parser.add_argument(
         "--out",
-        default="super_pixel_mask.png",
+        default="super_pixel_mask_radius.png",
         help="output mask path (default: super_pixel_mask.png)",
     )
+    # micro-kernel settings
     parser.add_argument("--kernel-size", type=int, default=9)
     parser.add_argument("--kernel-trim", type=float, default=0.05)
     parser.add_argument("--kernel-thresh", type=float, default=8.0)
+    # region-level settings
     parser.add_argument("--min-area", type=int, default=5)
     parser.add_argument("--alpha-dilate", type=int, default=1)
     parser.add_argument("--region-trim", type=float, default=0.05)
     parser.add_argument("--region-thresh", type=float, default=6.0)
+    # NEW: how far to look for neighbor regions (pixels in crop space)
+    parser.add_argument(
+        "--region-radius",
+        type=float,
+        default=45.0,
+        help="radius (in px, crop-space) to include neighbor regions for context (default: 45)",
+    )
     args = parser.parse_args()
 
     # 1) load
@@ -131,37 +140,67 @@ def main():
     orig_lab = color.rgb2lab(orig_c)
     edit_lab = color.rgb2lab(edit_c)
 
-    # 8) build final mask
+    # 8) precompute centroids for all regions so we can find neighbors fast
+    centroids = np.zeros((n_regions, 2), dtype=np.float32)  # (y, x)
+    for rid in range(1, n_regions + 1):
+        ys, xs = np.where(superset_labels == rid)
+        if ys.size == 0:
+            centroids[rid - 1] = [0.0, 0.0]
+        else:
+            centroids[rid - 1] = [ys.mean(), xs.mean()]
+
     keep_mask_c = np.zeros((h_c, w_c), dtype=bool)
     ks = args.kernel_size
+    rad = float(args.region_radius)
 
+    # 9) evaluate each region with neighborhood-aware kernels
     for region_id in range(1, n_regions + 1):
         region_pixels = (superset_labels == region_id)
         area = np.count_nonzero(region_pixels)
         if area < args.min_area:
             continue
 
+        # where this region intersects real content
         valid_pixels = region_pixels & union_alpha_c
         if not np.any(valid_pixels):
             continue
 
-        ys, xs = np.where(region_pixels)
-        rymin, rymax = ys.min(), ys.max()
-        rxmin, rxmax = xs.min(), xs.max()
+        # find neighbors within radius
+        cy, cx = centroids[region_id - 1]
+        dists = np.sqrt((centroids[:, 0] - cy) ** 2 + (centroids[:, 1] - cx) ** 2)
+        neighbor_ids = np.where(dists <= rad)[0] + 1  # back to 1-based
+
+        # build a neighborhood mask = this region + neighbors
+        neighborhood_mask = np.zeros((h_c, w_c), dtype=bool)
+        for nid in neighbor_ids:
+            neighborhood_mask |= (superset_labels == nid)
+
+        # we'll also need bbox of the whole neighborhood to keep loops small
+        ys_n, xs_n = np.where(neighborhood_mask)
+        nymin, nymax = ys_n.min(), ys_n.max()
+        nxmin, nxmax = xs_n.min(), xs_n.max()
 
         region_is_changed = False
 
-        for y0 in range(rymin, rymax + 1, ks):
+        # slide kernels over neighborhood bbox
+        for y0 in range(nymin, nymax + 1, ks):
             if region_is_changed:
                 break
             y1 = min(y0 + ks, h_c)
-            for x0 in range(rxmin, rxmax + 1, ks):
+            for x0 in range(nxmin, nxmax + 1, ks):
                 x1 = min(x0 + ks, w_c)
 
-                kernel_mask = region_pixels[y0:y1, x0:x1] & union_alpha_c[y0:y1, x0:x1]
+                # we ONLY care about kernels that actually touch our target region
+                touches_target = np.any(region_pixels[y0:y1, x0:x1])
+                if not touches_target:
+                    continue
+
+                # kernel mask: neighborhood ∩ content
+                kernel_mask = neighborhood_mask[y0:y1, x0:x1] & union_alpha_c[y0:y1, x0:x1]
                 if not np.any(kernel_mask):
                     continue
 
+                # compute trimmed ΔE on this extended kernel
                 ol = orig_lab[y0:y1, x0:x1, :]
                 el = edit_lab[y0:y1, x0:x1, :]
 
@@ -181,6 +220,7 @@ def main():
                     region_is_changed = True
                     break
 
+        # fallback: if neighborhood kernels never triggered, do old region-only check
         if not region_is_changed:
             region_score = trimmed_lab_deltaE_from_masks(
                 orig_lab, edit_lab, valid_pixels, trim_ratio=args.region_trim
@@ -191,11 +231,11 @@ def main():
         if region_is_changed:
             keep_mask_c[region_pixels] = True
 
-    # 9) paste back to full-size
+    # 10) paste back to full-size
     full_mask = np.zeros((H, W), dtype=np.uint8)
     full_mask[ymin:ymax, xmin:xmax] = keep_mask_c.astype(np.uint8) * 255
 
-    # 10) save
+    # 11) save
     io.imsave(args.out, full_mask)
     print(
         f"✅ Saved mask to {os.path.abspath(args.out)} | "
