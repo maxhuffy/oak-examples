@@ -113,7 +113,7 @@ def main():
     parser.add_argument("--region-thresh", type=float, default=6.0)
     parser.add_argument("--blur-sigma", type=float, default=8)
     # NEW: artifact-removal controls
-    parser.add_argument("--max-components", type=int, default=4,
+    parser.add_argument("--max-components", type=int, default=2,
                         help="keep at most this many big blobs at the very end")
     parser.add_argument("--min-component-area", type=int, default=200,
                         help="drop connected components smaller than this many pixels")
@@ -157,6 +157,7 @@ def main():
     # union alpha (dilated)
     union_alpha_c = (orig_a_c | edit_a_c)
     if args.alpha_dilate > 0:
+        # Revert to square to match previously working behavior (may emit FutureWarning on newer skimage)
         selem = morphology.square(1 + 2 * args.alpha_dilate)
         union_alpha_c = morphology.dilation(union_alpha_c, selem)
 
@@ -246,7 +247,8 @@ def main():
 
     # save
     io.imsave(args.out, full_mask)
-    print(f"✅ Saved mask to {os.path.abspath(args.out)} | regions={n_regions}")
+    # Avoid Unicode emoji that can trigger Windows cp1252 encode errors
+    print(f"Saved mask to {os.path.abspath(args.out)} | regions={n_regions}")
 
 
 if __name__ == "__main__":
