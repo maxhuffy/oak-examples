@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable, Tuple
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 BLUE_RGB = (0, 105, 255)
@@ -107,6 +107,8 @@ def magic_wand_expand(
 	min_diff: float,
 	connectivity: int,
 	max_passes: int,
+	local_bias: float,
+	min_red_neighbors: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
 	"""Grow the red mask using a tolerance-guided flood fill."""
 
@@ -149,6 +151,28 @@ def magic_wand_expand(
 				candidate_vec = diff_vec[ny, nx]
 				similarity = np.linalg.norm(candidate_vec - base_vec)
 
+				local_similarity = similarity
+				if local_bias > 0.0:
+					y0 = max(0, ny - 1)
+					y1 = min(height, ny + 2)
+					x0 = max(0, nx - 1)
+					x1 = min(width, nx + 2)
+					local_patch = red_mask[y0:y1, x0:x1]
+					if local_patch.any():
+						local_vectors = diff_vec[y0:y1, x0:x1][local_patch]
+						local_mean = local_vectors.mean(axis=0)
+						local_similarity = np.linalg.norm(candidate_vec - local_mean)
+						similarity = (similarity * (1 - local_bias)) + (local_similarity * local_bias)
+
+				if min_red_neighbors > 1:
+					y0 = max(0, ny - 1)
+					y1 = min(height, ny + 2)
+					x0 = max(0, nx - 1)
+					x1 = min(width, nx + 2)
+					neighbor_count = int(red_mask[y0:y1, x0:x1].sum())
+					if neighbor_count < min_red_neighbors:
+						continue
+
 				if similarity <= tolerance:
 					red_mask[ny, nx] = True
 					blue_mask[ny, nx] = False
@@ -164,6 +188,77 @@ def magic_wand_expand(
 			tolerance = min(tolerance + (tolerance_step * 0.5), tolerance_max)
 
 	return red_mask, blue_mask
+
+
+def morphological_open(mask: np.ndarray, size: int) -> np.ndarray:
+	if size <= 1:
+		return mask
+	if size % 2 == 0:
+		size += 1
+	img = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
+	img = img.filter(ImageFilter.MinFilter(size=size))
+	img = img.filter(ImageFilter.MaxFilter(size=size))
+	return np.array(img, dtype=np.uint8) > 0
+
+
+def convolve_boolean(mask: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+	kh, kw = kernel.shape
+	if kh % 2 == 0 or kw % 2 == 0:
+		raise ValueError("Kernel dimensions must be odd")
+
+	pad_h = kh // 2
+	pad_w = kw // 2
+	padded = np.pad(mask.astype(np.int32), ((pad_h, pad_h), (pad_w, pad_w)), mode="constant")
+	result = np.zeros_like(mask, dtype=np.int32)
+
+	for y in range(kh):
+		for x in range(kw):
+			weight = int(kernel[y, x])
+			if weight == 0:
+				continue
+			result += weight * padded[y : y + mask.shape[0], x : x + mask.shape[1]]
+
+	return result
+
+
+def remove_small_components(mask: np.ndarray, seeds: np.ndarray, min_size: int) -> np.ndarray:
+	if min_size <= 1:
+		return mask
+
+	height, width = mask.shape
+	visited = np.zeros_like(mask, dtype=bool)
+	cleaned = mask.copy()
+
+	for start_y, start_x in zip(*np.nonzero(mask)):
+		if visited[start_y, start_x]:
+			continue
+
+		stack = [(start_y, start_x)]
+		component = []
+		has_seed = False
+
+		while stack:
+			y, x = stack.pop()
+			if visited[y, x]:
+				continue
+			visited[y, x] = True
+			if not mask[y, x]:
+				continue
+
+			component.append((y, x))
+			if seeds[y, x]:
+				has_seed = True
+
+			for dy, dx in neighborhood(8):
+				ny, nx = y + dy, x + dx
+				if 0 <= ny < height and 0 <= nx < width and not visited[ny, nx] and mask[ny, nx]:
+					stack.append((ny, nx))
+
+		if not has_seed and len(component) < min_size:
+			for y, x in component:
+				cleaned[y, x] = False
+
+	return cleaned
 
 
 def compose_output(red: np.ndarray, blue: np.ndarray) -> Image.Image:
@@ -237,6 +332,30 @@ def parse_args() -> argparse.Namespace:
 		default=20,
 		help="Maximum number of tolerance passes",
 	)
+	parser.add_argument(
+		"--local-bias",
+		type=float,
+		default=0.5,
+		help="Weight (0-1) for local neighbor similarity influence",
+	)
+	parser.add_argument(
+		"--min-red-neighbors",
+		type=int,
+		default=1,
+		help="Minimum red neighbors required for accepting/keeping new red pixels",
+	)
+	parser.add_argument(
+		"--morph-open-size",
+		type=int,
+		default=3,
+		help="Size of morphological opening kernel to smooth stray tendrils",
+	)
+	parser.add_argument(
+		"--min-component-size",
+		type=int,
+		default=40,
+		help="Remove detached red components smaller than this (except original seeds)",
+	)
 	return parser.parse_args()
 
 
@@ -266,7 +385,21 @@ def main() -> None:
 		min_diff=args.min_diff,
 		connectivity=args.connectivity,
 		max_passes=args.max_passes,
+		local_bias=np.clip(args.local_bias, 0.0, 1.0),
+		min_red_neighbors=max(args.min_red_neighbors, 1),
 	)
+
+	if args.min_red_neighbors > 1:
+		kernel = np.ones((3, 3), dtype=int)
+		red_counts = convolve_boolean(expanded_red, kernel)
+		expanded_red &= red_counts >= args.min_red_neighbors
+		expanded_red |= red
+
+	expanded_red = morphological_open(expanded_red, size=args.morph_open_size)
+	expanded_red |= red
+
+	expanded_red = remove_small_components(expanded_red, red, args.min_component_size)
+	updated_blue = blue & ~expanded_red
 
 	output_img = compose_output(expanded_red, updated_blue)
 	output_img.save(args.output)
